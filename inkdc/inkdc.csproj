@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <LangVersion>9.0</LangVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <LangVersion>9.0</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="Ink.Engine.Runtime-Unofficial" />
+    <None Remove="..\testcases\hello.ink" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\ink\ink-engine-runtime\ink-engine-runtime.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,36 @@
+﻿{
+  "inkVersion": 20,
+  "root": [
+    [
+      [
+        "done",
+        {
+          "#n": "g-0"
+        }
+      ],
+      null
+    ],
+    "done",
+    {
+      "the_orient_express": [
+        {
+          "->": ".^.in_first_class"
+        },
+        {
+          "in_first_class": [
+            "^You are in first class.",
+            "\n",
+            null
+          ],
+          "in_third_class": [
+            "^You are in third class.",
+            "\n",
+            null
+          ]
+        }
+      ]
+    }
+  ],
+  "listDefs": {
+  }
+}
