@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text;
 using Ink.Runtime;
 
 namespace inkdc
@@ -12,11 +13,12 @@ namespace inkdc
         }
 
         public Story Story { get; }
+        private StringBuilder result = new StringBuilder();
 
         public string DecompileRoot()
         {
             Container mainContentContainer = Story.mainContentContainer;
-            var result = DecompileContainer(mainContentContainer);
+            DecompileContainer(mainContentContainer);
             if (mainContentContainer.namedOnlyContent != null)
             {
                 foreach (string name in mainContentContainer.namedOnlyContent.Keys)
@@ -24,18 +26,23 @@ namespace inkdc
                     var namedContent = mainContentContainer.namedOnlyContent[name];
                     if (namedContent is Container namedContainer)
                     {
-                        result += "== " + name + " ==\n";
-                        result += DecompileKnot(namedContainer);
+                        Out("== " + name + " ==\n");
+                        DecompileKnot(namedContainer);
                     }
                 }
             }
             
-            return result;
+            return result.ToString();
         }
 
-        string DecompileKnot(Container container)
+        void Out(string text)
         {
-            var result = DecompileContainer(container);
+            result.Append(text);
+        }
+
+        void DecompileKnot(Container container)
+        {
+            DecompileContainer(container);
 
             if (container.namedOnlyContent != null)
             {
@@ -44,49 +51,69 @@ namespace inkdc
                     var namedContent = container.namedOnlyContent[name];
                     if (namedContent is Container namedContainer)
                     {
-                        result += "= " + name + "\n";
-                        result += DecompileContainer(namedContainer);
+                        Out("= " + name + "\n");
+                        DecompileContainer(namedContainer);
                     }
                 }
             }
-            return result;
         }
 
-        string DecompileContainer(Container container)
+        void DecompileContainer(Container container)
         {
-            var choices = AnalyzeChoices(container);
-            if (choices.Count > 0)
+            for (int i=0; i<container.content.Count; i++)
             {
-                var result = "";
-                foreach (ChoiceData choice in choices)
+                if (container.content[i].IsControlCommand(ControlCommand.CommandType.EvalStart))
                 {
-                    result += DecompileChoice(choice);
+                    var choices = AnalyzeChoices(container, i);
+                    if (choices.Count > 0)
+                    {
+                        foreach(ChoiceData choice in choices)
+                        {
+                            DecompileChoice(choice);
+                        }
+                        break;
+                    }
                 }
-                return result;
+                DecompileObject(container.content[i]);
             }
-
-            return DecompileList(container.content);
         }
 
-        private string DecompileList(List<Ink.Runtime.Object> content)
+        private void DecompileList(List<Ink.Runtime.Object> content)
         {
-            var result = "";
             foreach (var item in content)
             {
-                if (item is Container childContainer)
+                DecompileObject(item);
+            }
+        }
+
+        private void DecompileObject(Ink.Runtime.Object item)
+        {
+            if (item is Container childContainer)
+            {
+                DecompileContainer(childContainer);
+            }
+            else if (item is StringValue stringValue)
+            {
+                Out(stringValue.value);
+            }
+            else if (item is Divert divert)
+            {
+                if (!IsGeneratedDivert(divert))
                 {
-                    result += DecompileContainer(childContainer);
-                }
-                else if (item is StringValue stringValue)
-                {
-                    result += stringValue.value;
-                }
-                else if (item is Divert divert && !IsGeneratedDivert(divert))
-                {
-                    result += "-> " + divert.targetPathString + "\n";
+                    Out("-> " + divert.targetPathString + "\n");
                 }
             }
-            return result;
+            else if (item is ControlCommand controlCommand)
+            {
+                if (controlCommand.commandType != ControlCommand.CommandType.Done)
+                {
+                    throw new NotSupportedException("Don't know how to decompile " + item);
+                }
+            }
+            else
+            {
+                throw new NotSupportedException("Don't know how to decompile " + item);
+            }
         }
 
         private bool IsGeneratedDivert(Divert divert)
@@ -105,25 +132,32 @@ namespace inkdc
             return false;
         }
 
-        string DecompileChoice(ChoiceData choiceData)
+        void DecompileChoice(ChoiceData choiceData)
         {
-            var result = choiceData.Choice.onceOnly ? "* " : "+ ";
+            Out(choiceData.Choice.onceOnly ? "* " : "+ ");
+            if (choiceData.Condition != null)
+            {
+                Out("{ ");
+                Out(DecompileExpression(choiceData.Condition));
+                Out(" } ");
+            }
             if (choiceData.StartContent != null)
             {
-                result += DecompileList(choiceData.StartContent);
+                DecompileList(choiceData.StartContent);
             }
             if (choiceData.ChoiceOnlyContent != null)
             {
-                result += "[" + DecompileList(choiceData.ChoiceOnlyContent) + "]";
+                Out("[");
+                DecompileList(choiceData.ChoiceOnlyContent);
+                Out("]");
             }
             if (choiceData.InnerContent != null)
             {
-                result += DecompileList(choiceData.InnerContent);
+                DecompileList(choiceData.InnerContent);
             }
-            return result;
         }
 
-        List<ChoiceData> AnalyzeChoices(Container container)
+        List<ChoiceData> AnalyzeChoices(Container container, int startIndex)
         {
             var result = new List<ChoiceData>();
             var content = container.content;
@@ -132,7 +166,7 @@ namespace inkdc
             // however, containers may be combined by flattening, which will lead
             // to multiple choices in one container
 
-            var choiceStart = 0;
+            var choiceStart = startIndex;
             while (true)
             {
                 var choicePointIndex = content.FindIndex(choiceStart, (x) => x is ChoicePoint);
@@ -158,6 +192,10 @@ namespace inkdc
                     cursor.SkipControlCommand(ControlCommand.CommandType.BeginString);
                     choiceData.ChoiceOnlyContent = cursor.SubListTo(ControlCommand.CommandType.EndString);
                 }
+                if (choicePoint.hasCondition)
+                {
+                    choiceData.Condition = cursor.SubListTo(ControlCommand.CommandType.EvalEnd);
+                }
 
                 var target = Story.ContentAtPath(choicePoint.pathOnChoice).container;
                 if (target != null)
@@ -176,6 +214,42 @@ namespace inkdc
 
             return result;
         }
+
+        string DecompileExpression(List<Ink.Runtime.Object> expression)
+        {
+            Stack<String> stack = new();
+            foreach (Ink.Runtime.Object obj in expression)
+            {
+                if (obj is VariableReference varRef)
+                {
+                    if (varRef.name != null)
+                    {
+                        stack.Push(varRef.name);
+                    }
+                    else
+                    {
+                        stack.Push(varRef.pathStringForCount);
+                    }
+                }
+                else if (obj is NativeFunctionCall call)
+                {
+                    if (call.name == "!")
+                    {
+                        stack.Push("not " + stack.Pop());
+                    }
+                    else
+                    {
+                        throw new NotSupportedException("Don't know how to decompile " + obj);
+                    }
+                }
+                else
+                {
+                    throw new NotSupportedException("Don't know how to decompile " + obj);
+                }
+
+            }
+            return stack.Pop();
+        }
     }
 
 
@@ -188,6 +262,7 @@ namespace inkdc
 
         public List<Ink.Runtime.Object> StartContent { get; set; }
         public List<Ink.Runtime.Object> ChoiceOnlyContent { get; set; }
+        public List<Ink.Runtime.Object> Condition { get; set; }
         public List<Ink.Runtime.Object> InnerContent { get; set; }
         public ChoicePoint Choice { get; }
     }
@@ -242,7 +317,9 @@ namespace inkdc
                 }
                 index++;
             }
-            return content.GetRange(start, index - start);
+            var result = content.GetRange(start, index - start);
+            index++;
+            return result;
         }
 
         public List<Ink.Runtime.Object> Tail()
