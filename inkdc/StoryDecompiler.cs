@@ -235,12 +235,28 @@ namespace inkdc
                 {
                     if (call.name == "!")
                     {
-                        stack.Push("not " + stack.Pop());
+                        var operand = stack.Pop();
+                        if (operand.Contains(" "))
+                        {
+                            stack.Push("not(" + operand + ")");
+                        }
+                        else
+                        {
+                            stack.Push("not " + operand);
+                        }
+                    }
+                    else if (_binaryOperators.Contains(call.name))
+                    {
+                        BuildBinaryExpression(stack, call.name);
                     }
                     else
                     {
                         throw new NotSupportedException("Don't know how to decompile " + obj);
                     }
+                }
+                else if (obj is IntValue)
+                {
+                    stack.Push(obj.ToString());
                 }
                 else
                 {
@@ -250,6 +266,26 @@ namespace inkdc
             }
             return stack.Pop();
         }
+
+        void BuildBinaryExpression(Stack<String> stack, string op)
+        {
+            var operand1 = stack.Pop();
+            var operand2 = stack.Pop();
+            if (operand1.Contains(" "))
+            {
+                operand1 = "(" + operand1 + ")";
+            }
+            if (operand2.Contains(" "))
+            {
+                operand2 = "(" + operand2 + ")";
+            }
+            stack.Push(operand2 + " " + op + " " + operand1);
+        }
+
+        static HashSet<string> _binaryOperators = new HashSet<string>
+        {
+            "+", "-", "/", "*", "%", "==", "<", ">", ">=", "<=", "!=", "&&", "||"
+        };
     }
 
 
