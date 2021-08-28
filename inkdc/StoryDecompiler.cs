@@ -52,7 +52,7 @@ namespace inkdc
                     if (namedContent is Container namedContainer)
                     {
                         Out("= " + name + "\n");
-                        DecompileContainer(namedContainer);
+                        DecompileContainer(namedContainer); 
                     }
                 }
             }
@@ -60,29 +60,33 @@ namespace inkdc
 
         void DecompileContainer(Container container)
         {
-            for (int i=0; i<container.content.Count; i++)
-            {
-                if (container.content[i].IsControlCommand(ControlCommand.CommandType.EvalStart))
-                {
-                    var choices = AnalyzeChoices(container, i);
-                    if (choices.Count > 0)
-                    {
-                        foreach(ChoiceData choice in choices)
-                        {
-                            DecompileChoice(choice);
-                        }
-                        break;
-                    }
-                }
-                DecompileObject(container.content[i]);
-            }
+            DecompileContainerRange(new ContainerRange(container, 0, container.content.Count));
         }
 
-        private void DecompileList(List<Ink.Runtime.Object> content)
+        void DecompileContainerRange(ContainerRange containerRange)
         {
-            foreach (var item in content)
+            Container container = containerRange.Container;
+            int index = containerRange.StartIndex;
+            while (index < containerRange.EndIndex)
             {
-                DecompileObject(item);
+                if (container.content[index].IsControlCommand(ControlCommand.CommandType.EvalStart))
+                {
+                    var choice = AnalyzeChoice(container, index);
+                    if (choice != null)
+                    {
+                        DecompileChoice(choice);
+                        index = choice.EndIndex;
+                        continue;
+                    }
+                    var sequence = AnalyzeSequence(container, index);
+                    if (sequence != null)
+                    {
+                        DecompileSequence(sequence);
+                        index = sequence.EndIndex;
+                        continue;
+                    }
+                }
+                DecompileObject(container.content[index++]);
             }
         }
 
@@ -138,81 +142,151 @@ namespace inkdc
             if (choiceData.Condition != null)
             {
                 Out("{ ");
-                Out(DecompileExpression(choiceData.Condition));
+                Out(DecompileExpression(choiceData.Condition.Elements));
                 Out(" } ");
             }
             if (choiceData.StartContent != null)
             {
-                DecompileList(choiceData.StartContent);
+                DecompileContainerRange(choiceData.StartContent);
             }
             if (choiceData.ChoiceOnlyContent != null)
             {
                 Out("[");
-                DecompileList(choiceData.ChoiceOnlyContent);
+                DecompileContainerRange(choiceData.ChoiceOnlyContent);
                 Out("]");
             }
             if (choiceData.InnerContent != null)
             {
-                DecompileList(choiceData.InnerContent);
+                DecompileContainerRange(choiceData.InnerContent);
             }
         }
 
-        List<ChoiceData> AnalyzeChoices(Container container, int startIndex)
+        ChoiceData AnalyzeChoice(Container container, int index)
         {
-            var result = new List<ChoiceData>();
             var content = container.content;
+            var choiceStart = index;
+            var choicePointIndex = content.FindIndex(choiceStart, (x) => x is ChoicePoint);
+            if (choicePointIndex < 0) return null;
 
-            // normally each choice is generated into its own container
-            // however, containers may be combined by flattening, which will lead
-            // to multiple choices in one container
+            ChoicePoint choicePoint = (ChoicePoint)content[choicePointIndex];
+            ChoiceData choiceData = new(choicePoint, choicePointIndex + 1);
+            ContainerCursor cursor = new(container, choiceStart);
+            cursor.SkipControlCommand(ControlCommand.CommandType.EvalStart);
 
-            var choiceStart = startIndex;
-            while (true)
+            if (choicePoint.hasStartContent)
             {
-                var choicePointIndex = content.FindIndex(choiceStart, (x) => x is ChoicePoint);
-                if (choicePointIndex < 0) break;
-
-                ChoicePoint choicePoint = (ChoicePoint)content[choicePointIndex];
-                ChoiceData choiceData = new(choicePoint);
-                ContainerCursor cursor = new(container, choiceStart);
-                cursor.SkipControlCommand(ControlCommand.CommandType.EvalStart);
-
-                if (choicePoint.hasStartContent)
+                Container startContentContainer = (Container)cursor.Container.namedContent["s"];
+                // last element is divert to $r, need to skip it from decompilation
+                choiceData.StartContent = new(startContentContainer, 0, startContentContainer.content.Count - 1);
+                if (cursor.SkipToLabel("$r1"))
                 {
-                    Container startContentContainer = (Container)container.namedContent["s"];
-                    // last element is divert to $r, need to skip it from decompilation
-                    choiceData.StartContent = startContentContainer.content.GetRange(0, startContentContainer.content.Count - 1);
-                    if (cursor.SkipToLabel("$r1"))
-                    {
-                        cursor.SkipControlCommand(ControlCommand.CommandType.EndString);
-                    }
+                    cursor.SkipControlCommand(ControlCommand.CommandType.EndString);
                 }
-                if (choicePoint.hasChoiceOnlyContent)
-                {
-                    cursor.SkipControlCommand(ControlCommand.CommandType.BeginString);
-                    choiceData.ChoiceOnlyContent = cursor.SubListTo(ControlCommand.CommandType.EndString);
-                }
-                if (choicePoint.hasCondition)
-                {
-                    choiceData.Condition = cursor.SubListTo(ControlCommand.CommandType.EvalEnd);
-                }
-
-                var target = Story.ContentAtPath(choicePoint.pathOnChoice).container;
-                if (target != null)
-                {
-                    ContainerCursor targetCursor = new(target);
-                    if (choicePoint.hasStartContent)
-                    {
-                        targetCursor.SkipToLabel("$r2");
-                    }
-                    choiceData.InnerContent = targetCursor.Tail();
-                }
-
-                result.Add(choiceData);
-                choiceStart = choicePointIndex + 1;
+            }
+            if (choicePoint.hasChoiceOnlyContent)
+            {
+                cursor.SkipControlCommand(ControlCommand.CommandType.BeginString);
+                choiceData.ChoiceOnlyContent = cursor.SubListTo(ControlCommand.CommandType.EndString);
+            }
+            if (choicePoint.hasCondition)
+            {
+                choiceData.Condition = cursor.SubListTo(ControlCommand.CommandType.EvalEnd);
             }
 
-            return result;
+            var target = Story.ContentAtPath(choicePoint.pathOnChoice).container;
+            if (target != null)
+            {
+                ContainerCursor targetCursor = new(target);
+                if (choicePoint.hasStartContent)
+                {
+                    targetCursor.SkipToLabel("$r2");
+                }
+                choiceData.InnerContent = targetCursor.Tail();
+            }
+
+            return choiceData;
+        }
+
+        SequenceData AnalyzeSequence(Container container, int index)
+        {
+            var cursor = new ContainerCursor(container, index);
+            cursor.SkipControlCommand(ControlCommand.CommandType.EvalStart);
+            var cycle = false;
+            var shuffle = false;
+            if (!cursor.SkipControlCommand(ControlCommand.CommandType.VisitIndex))
+            {
+                return null;
+            }
+            if (cursor.Current is IntValue)
+            {
+                cursor.TakeNext();
+            }
+            if (cursor.Current is NativeFunctionCall functionCall && functionCall.name == "%")
+            {
+                cycle = true;
+            }
+            else if (cursor.Current.IsControlCommand(ControlCommand.CommandType.SequenceShuffleIndex))
+            {
+                shuffle = true;
+            }
+            var branches = new List<ContainerRange>();
+            while (!cursor.AtEnd() && !cursor.Current.IsControlCommand(ControlCommand.CommandType.NoOp))
+            {
+                if (cursor.Current is Divert divert && IsSequenceBranchDivert(divert))
+                {
+                    var branchContainer = divert.targetPointer.container;
+                    if (branchContainer != null)
+                    {
+                        // first element is a PopGeneratedValue(), last is divert back
+                        branches.Add(new ContainerRange(branchContainer, 1, branchContainer.content.Count - 1));
+                    }
+                }
+                cursor.TakeNext();
+            }
+            if (cursor.AtEnd())
+            {
+                return null;
+            }
+            cursor.SkipControlCommand(ControlCommand.CommandType.NoOp);
+            return new SequenceData(cursor.Index, branches, cycle, shuffle);
+        }
+
+        void DecompileSequence(SequenceData sequence)
+        {
+            var branches = sequence.Branches;
+            Out("{");
+            if (sequence.Cycle)
+            {
+                Out("&");
+            }
+            else if (sequence.Shuffle)
+            {
+                Out("~");
+            }
+            else if (branches.Count > 2 && branches[branches.Count-1].Count == 0)
+            {
+                Out("!");
+                branches = branches.GetRange(0, branches.Count - 1);
+            }
+            var first = true;
+            foreach (var branch in branches)
+            {
+                if (!first)
+                {
+                    Out("|");
+                }
+                first = false;
+                DecompileContainerRange(branch);
+            }
+            Out("}");
+        }
+
+        private static bool IsSequenceBranchDivert(Divert divert)
+        {
+            Pointer targetPointer = divert.targetPointer;
+            if (targetPointer.container == null) return false;
+            var name = targetPointer.container.name;
+            return name != null && name.StartsWith("s") && targetPointer.index == 0;
         }
 
         string DecompileExpression(List<Ink.Runtime.Object> expression)
@@ -288,79 +362,126 @@ namespace inkdc
         };
     }
 
-
     class ChoiceData
     {
-        public ChoiceData(ChoicePoint choice)
+        public ChoiceData(ChoicePoint choice, int endIndex)
         {
             Choice = choice;
+            EndIndex = endIndex;
         }
 
-        public List<Ink.Runtime.Object> StartContent { get; set; }
-        public List<Ink.Runtime.Object> ChoiceOnlyContent { get; set; }
-        public List<Ink.Runtime.Object> Condition { get; set; }
-        public List<Ink.Runtime.Object> InnerContent { get; set; }
+        public ContainerRange StartContent { get; set; }
+        public ContainerRange ChoiceOnlyContent { get; set; }
+        public ContainerRange Condition { get; set; }
+        public ContainerRange InnerContent { get; set; }
         public ChoicePoint Choice { get; }
+        public int EndIndex { get; }
+    }
+
+    class SequenceData
+    {
+        public SequenceData(int endIndex, List<ContainerRange> branches, bool cycle, bool shuffle) 
+        {
+            EndIndex = endIndex;
+            Branches = branches;
+            Cycle = cycle;
+            Shuffle = shuffle;
+        }
+
+        public List<ContainerRange> Branches { get; }
+        public bool Cycle { get; }
+        public bool Shuffle { get; }
+        public int EndIndex { get; }
+    }
+
+    class ContainerRange
+    {
+        public ContainerRange(Container container, int startIndex, int endIndex)
+        {
+            Container = container;
+            StartIndex = startIndex;
+            EndIndex = endIndex;
+        }
+
+        public Container Container { get; }
+        public int StartIndex { get; }
+        public int EndIndex { get; }
+        public int Count => EndIndex - StartIndex;
+        public List<Ink.Runtime.Object> Elements =>
+            Container.content.GetRange(StartIndex, Count);
     }
 
     class ContainerCursor
     {
-        private readonly Container container;
+        public Container Container { get; private set; }
+        public int Index { get; private set; }
         private readonly List<Ink.Runtime.Object> content;
-
-        private int index;
 
         public ContainerCursor(Container container, int startIndex = 0)
         {
-            this.container = container;
+            this.Container = container;
             this.content = container.content;
-            this.index = startIndex;
+            this.Index = startIndex;
         }
 
-        public void SkipControlCommand(ControlCommand.CommandType commandType)
+        public bool AtEnd()
         {
-            if (index < content.Count &&
-                content[index] is ControlCommand command &&
+            return Index >= content.Count;
+        }
+
+         public Ink.Runtime.Object Current => content[Index];
+
+        public Ink.Runtime.Object TakeNext()
+        {
+            return content[Index++];
+        }
+
+        public bool SkipControlCommand(ControlCommand.CommandType commandType)
+        {
+            if (Index < content.Count &&
+                content[Index] is ControlCommand command &&
                 command.commandType == commandType)
             {
-                index++;
-            }
-        }
-
-        public bool SkipToLabel(string label)
-        {
-            while (index < content.Count)
-            {
-                if (content[index] is Container child && child.name == label)
-                {
-                    index++;
-                    return true;
-                }
-                index++;
+                Index++;
+                return true;
             }
             return false;
         }
 
-        public List<Ink.Runtime.Object> SubListTo(ControlCommand.CommandType commandType)
+        public bool SkipToLabel(string label)
         {
-            var start = index;
-            while (index < container.content.Count)
+            while (Index < content.Count)
             {
-                if (container.content[index] is ControlCommand command &&
+                if (content[Index] is Container child && child.name == label)
+                {
+                    Index++;
+                    return true;
+                }
+                Index++;
+            }
+            return false;
+        }
+
+        public ContainerRange SubListTo(ControlCommand.CommandType commandType)
+        {
+            var start = Index;
+            while (Index < Container.content.Count)
+            {
+                if (Container.content[Index] is ControlCommand command &&
                     command.commandType == commandType)
                 {
                     break;
                 }
-                index++;
+                Index++;
             }
-            var result = content.GetRange(start, index - start);
-            index++;
+            var result = new ContainerRange(Container, start, Index);
+            Index++;
             return result;
         }
 
-        public List<Ink.Runtime.Object> Tail()
+        public ContainerRange Tail()
         {
-            return content.GetRange(index, content.Count - index);
+            return new(Container, Index, content.Count);
         }
     }
 
