@@ -388,9 +388,33 @@ namespace inkdc
                         throw new NotSupportedException("Don't know how to decompile " + obj);
                     }
                 }
-                else if (obj is IntValue)
+                else if (obj is IntValue || obj is BoolValue)
                 {
                     stack.Push(obj.ToString());
+                }
+                else if (obj is ControlCommand controlCommand)
+                {
+                    if (controlCommand.commandType == ControlCommand.CommandType.ChoiceCount)
+                    {
+                        stack.Push("CHOICE_COUNT()");
+                    }
+                    else if (controlCommand.commandType == ControlCommand.CommandType.Turns)
+                    {
+                        stack.Push("TURNS()");
+                    }
+                    else if (controlCommand.commandType == ControlCommand.CommandType.TurnsSince)
+                    {
+                        var operand = stack.Pop();
+                        stack.Push("TURNS_SINCE(" + operand + ")");
+                    }
+                    else
+                    {
+                        throw new NotSupportedException("Don't know how to decompile " + obj);
+                    }
+                }
+                else if (obj is DivertTargetValue divertTargetValue)
+                {
+                    stack.Push("-> " + divertTargetValue.CompactPathString(divertTargetValue.targetPath));
                 }
                 else
                 {
