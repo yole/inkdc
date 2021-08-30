@@ -1,1 +1,78 @@
-﻿{"inkVersion":20,"root":[[["done",{"#n":"g-0"}],null],"done",{"start":[["^You're in New York.","\n","ev","str","^Go to Paris","/str",{"CNT?":"visit_paris"},"!","/ev",{"*":".^.c-0","flg":21},"ev","str","^Return to Paris","/str",{"CNT?":"visit_paris"},"/ev",{"*":".^.c-1","flg":5},{"c-0":["^ ",{"->":"visit_paris"},"\n",{"#f":5}],"c-1":["^ ",{"->":"visit_paris"},"\n",null]}],null],"visit_paris":["^You're in Paris","\n",{"#f":1}]}],"listDefs":{}}
+﻿{
+  "inkVersion": 20,
+  "root": [
+    [
+      [
+        "done",
+        {
+          "#n": "g-0"
+        }
+      ],
+      null
+    ],
+    "done",
+    {
+      "start": [
+        [
+          "^You're in New York.",
+          "\n",
+          "ev",
+          "str",
+          "^Go to Paris",
+          "/str",
+          {
+            "CNT?": "visit_paris"
+          },
+          "!",
+          "/ev",
+          {
+            "*": ".^.c-0",
+            "flg": 21
+          },
+          "ev",
+          "str",
+          "^Return to Paris",
+          "/str",
+          {
+            "CNT?": "visit_paris"
+          },
+          "/ev",
+          {
+            "*": ".^.c-1",
+            "flg": 5
+          },
+          {
+            "c-0": [
+              "^ ",
+              {
+                "->": "visit_paris"
+              },
+              "\n",
+              {
+                "#f": 5
+              }
+            ],
+            "c-1": [
+              "^ ",
+              {
+                "->": "visit_paris"
+              },
+              "\n",
+              null
+            ]
+          }
+        ],
+        null
+      ],
+      "visit_paris": [
+        "^You're in Paris",
+        "\n",
+        {
+          "#f": 1
+        }
+      ]
+    }
+  ],
+  "listDefs": {
+  }
+}

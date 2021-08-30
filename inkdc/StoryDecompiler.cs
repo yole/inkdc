@@ -69,6 +69,13 @@ namespace inkdc
             int index = containerRange.StartIndex;
             while (index < containerRange.EndIndex)
             {
+                var weave = AnalyzeWeave(container, index);
+                if (weave != null)
+                {
+                    DecompileWeave(weave);
+                    index = weave.EndIndex;
+                    continue;
+                }
                 if (container.content[index].IsControlCommand(ControlCommand.CommandType.EvalStart))
                 {
                     var choice = AnalyzeChoice(container, index);
@@ -170,6 +177,10 @@ namespace inkdc
 
         ChoiceData AnalyzeChoice(Container container, int index)
         {
+            if (!container.content[index].IsControlCommand(ControlCommand.CommandType.EvalStart))
+            {
+                return null;
+            }
             var content = container.content;
             var choiceStart = index;
             var choicePointIndex = content.FindIndex(choiceStart, (x) => x is ChoicePoint);
@@ -212,6 +223,88 @@ namespace inkdc
             }
 
             return choiceData;
+        }
+
+        WeaveData AnalyzeWeave(Container container, int index)
+        {
+            List<ChoiceData> choices = new();
+            while (true)
+            {
+                if (index < container.content.Count &&
+                    container.content [index] is Container childContainer)
+                {
+                    ChoiceData choice = AnalyzeChoice(childContainer, 0);
+                    if (choice == null) break;
+                    choices.Add(choice);
+                    index++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            if (choices.Count == 0) return null;
+
+            Path maybeGatherPath = ExtractGatherPath(choices [0]);
+            if (maybeGatherPath != null)
+            {
+                for (int i = 1; i < choices.Count; i++)
+                {
+                    Path otherPath = ExtractGatherPath(choices[i]);
+                    if (otherPath == null || maybeGatherPath.componentsString != otherPath.componentsString)
+                    {
+                        maybeGatherPath = null;
+                        break;
+                    }
+                }
+            }
+            ContainerRange gatherContent = null;
+            if (maybeGatherPath != null)
+            {
+                SearchResult searchResult = Story.ContentAtPath(maybeGatherPath);
+                if (searchResult.container != null)
+                {
+                    foreach (var choice in choices)
+                    {
+                        choice.InnerContent = choice.InnerContent.SubRange(0, choice.InnerContent.Count - 1);
+                    }
+                    gatherContent = new ContainerRange(searchResult.container, 0, searchResult.container.content.Count);
+                }
+            }
+            return new WeaveData(choices, gatherContent, index);
+        }
+
+        Path ExtractGatherPath(ChoiceData choice)
+        {
+            if (choice.InnerContent.Count == 0) return null;
+            if (choice.InnerContent.At(choice.InnerContent.Count-1) is Divert divert)
+            {
+                var path = divert.targetPath;
+                if (path != null)
+                {
+                    return path;
+                }
+            }
+            return null;
+        }
+
+        void DecompileWeave(WeaveData weave)
+        {
+            foreach (var choice in weave.Choices)
+            {
+                DecompileChoice(choice);
+            }
+            if (weave.GatherContent != null && !IsGeneratedGather(weave.GatherContent))
+            {
+                Out("- ");
+                DecompileContainerRange(weave.GatherContent);
+            }
+        }
+
+        bool IsGeneratedGather(ContainerRange containerRange)
+        {
+            return containerRange.Count == 1 &&
+                containerRange.At(0).IsControlCommand(ControlCommand.CommandType.Done);
         }
 
         SequenceData AnalyzeSequence(Container container, int index)
@@ -440,7 +533,7 @@ namespace inkdc
             stack.Push(operand2 + " " + op + " " + operand1);
         }
 
-        static HashSet<string> _binaryOperators = new HashSet<string>
+        static HashSet<string> _binaryOperators = new()
         {
             "+", "-", "/", "*", "%", "==", "<", ">", ">=", "<=", "!=", "&&", "||"
         };
@@ -459,6 +552,20 @@ namespace inkdc
         public ContainerRange Condition { get; set; }
         public ContainerRange InnerContent { get; set; }
         public ChoicePoint Choice { get; }
+        public int EndIndex { get; }
+    }
+
+    class WeaveData
+    {
+        public WeaveData(List<ChoiceData> choices, ContainerRange gatherContent, int endIndex)
+        {
+            Choices = choices;
+            GatherContent = gatherContent;
+            EndIndex = endIndex;
+        }
+
+        public List<ChoiceData> Choices { get; }
+        public ContainerRange GatherContent { get; }
         public int EndIndex { get; }
     }
 
@@ -507,6 +614,12 @@ namespace inkdc
         public int Count => EndIndex - StartIndex;
         public List<Ink.Runtime.Object> Elements =>
             Container.content.GetRange(StartIndex, Count);
+        public Ink.Runtime.Object At(int index) => Container.content[index + StartIndex];
+
+        public ContainerRange SubRange(int start, int end)
+        {
+            return new(Container, StartIndex + start, StartIndex + end);
+        }
     }
 
     class ContainerCursor
