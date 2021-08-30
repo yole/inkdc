@@ -85,6 +85,13 @@ namespace inkdc
                         index = sequence.EndIndex;
                         continue;
                     }
+                    var conditional = AnalyzeConditional(container, index);
+                    if (conditional != null)
+                    {
+                        DecompileConditional(conditional);
+                        index = conditional.EndIndex;
+                        continue;
+                    }
                 }
                 DecompileObject(container.content[index++]);
             }
@@ -289,6 +296,59 @@ namespace inkdc
             return name != null && name.StartsWith("s") && targetPointer.index == 0;
         }
 
+        ConditionalData AnalyzeConditional(Container container, int index)
+        {
+            var cursor = new ContainerCursor(container, index);
+            cursor.SkipControlCommand(ControlCommand.CommandType.EvalStart);
+            int conditionStart = cursor.Index;
+            if (!cursor.SkipToControlCommand(ControlCommand.CommandType.EvalEnd))
+            {
+                return null;
+            }
+            int conditionEnd = cursor.Index - 1;
+            List<ContainerRange> branches = new();
+            while (cursor.Current is Container nestedContainer)
+            {
+                if (nestedContainer.content[0] is Divert divert)
+                {
+                    var branchContainer = divert.targetPointer.container;
+                    // last element is divert to rejoin target
+                    branches.Add(new ContainerRange(branchContainer, 0, branchContainer.content.Count - 1));
+                }
+                else
+                {
+                    return null;
+                }
+                cursor.TakeNext();
+            }
+            if (cursor.Current.IsControlCommand(ControlCommand.CommandType.NoOp))
+            {
+                cursor.TakeNext();
+                return new ConditionalData(new ContainerRange(container, conditionStart, conditionEnd),
+                    branches, cursor.Index);
+            }
+
+            return null;
+        }
+
+        void DecompileConditional(ConditionalData conditional)
+        {
+            Out("{");
+            Out(DecompileExpression(conditional.Condition.Elements));
+            Out(":");
+            DecompileContainerRange(conditional.Branches[0]);
+            if (conditional.Branches.Count == 2)
+            {
+                Out("|");
+                DecompileContainerRange(conditional.Branches[1]);
+            }
+            else if (conditional.Branches.Count > 2)
+            {
+                throw new NotSupportedException("Don't know how to decompile >2 branches");
+            }
+            Out("}");
+        }
+
         string DecompileExpression(List<Ink.Runtime.Object> expression)
         {
             Stack<String> stack = new();
@@ -394,6 +454,20 @@ namespace inkdc
         public int EndIndex { get; }
     }
 
+    class ConditionalData
+    {
+        public ConditionalData(ContainerRange condition, List<ContainerRange> branches, int endIndex)
+        {
+            Condition = condition;
+            Branches = branches;
+            EndIndex = endIndex;
+        }
+
+        public ContainerRange Condition { get; }
+        public List<ContainerRange> Branches { get; }
+        public int EndIndex { get; }
+    }
+
     class ContainerRange
     {
         public ContainerRange(Container container, int startIndex, int endIndex)
@@ -453,6 +527,20 @@ namespace inkdc
             while (Index < content.Count)
             {
                 if (content[Index] is Container child && child.name == label)
+                {
+                    Index++;
+                    return true;
+                }
+                Index++;
+            }
+            return false;
+        }
+
+        public bool SkipToControlCommand(ControlCommand.CommandType commandType)
+        {
+            while (Index < content.Count)
+            {
+                if (content[Index] is ControlCommand command && command.commandType == commandType)
                 {
                     Index++;
                     return true;

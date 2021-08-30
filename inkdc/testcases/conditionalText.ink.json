@@ -1,0 +1,48 @@
+﻿{
+  "inkVersion": 20,
+  "root": [
+    [
+      "ev",
+      {
+        "CNT?": "met_blofeld"
+      },
+      "/ev",
+      [
+        {
+          "->": ".^.b",
+          "c": true
+        },
+        {
+          "b": [
+            "^ \"I saw him. Only for a moment.\" ",
+            {
+              "->": "0.4"
+            },
+            null
+          ]
+        }
+      ],
+      "nop",
+      "\n",
+      [
+        "done",
+        {
+          "#n": "g-0"
+        }
+      ],
+      null
+    ],
+    "done",
+    {
+      "met_blofeld": [
+        "^You meet the guy.",
+        "\n",
+        {
+          "#f": 1
+        }
+      ]
+    }
+  ],
+  "listDefs": {
+  }
+}

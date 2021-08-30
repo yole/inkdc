@@ -1,0 +1,70 @@
+﻿{
+  "inkVersion": 20,
+  "root": [
+    [
+      "^\"His real name was ",
+      "ev",
+      {
+        "CNT?": "met_blofeld.learned_his_name"
+      },
+      "/ev",
+      [
+        {
+          "->": ".^.b",
+          "c": true
+        },
+        {
+          "b": [
+            "^ Franz",
+            {
+              "->": "0.6"
+            },
+            null
+          ]
+        }
+      ],
+      [
+        {
+          "->": ".^.b"
+        },
+        {
+          "b": [
+            "^a secret",
+            {
+              "->": "0.6"
+            },
+            null
+          ]
+        }
+      ],
+      "nop",
+      "^.\"",
+      "\n",
+      [
+        "done",
+        {
+          "#n": "g-0"
+        }
+      ],
+      null
+    ],
+    "done",
+    {
+      "met_blofeld": [
+        "^You meet the guy.",
+        "\n",
+        {
+          "learned_his_name": [
+            "^The name of the guy is Franz.",
+            "\n",
+            {
+              "#f": 1
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "listDefs": {
+  }
+}
