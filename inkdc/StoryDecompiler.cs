@@ -59,17 +59,14 @@ namespace inkdc
             }
         }
 
-        CompiledContainer AnalyzeContainer(Container container)
+        public CompiledContainer AnalyzeContainer(Container container, int index = 0, int endIndex = -1)
         {
-            return AnalyzeContainerRange(new ContainerRange(container, 0, container.content.Count));
-        }
-
-        public CompiledContainer AnalyzeContainerRange(ContainerRange containerRange)
-        {
-            Container container = containerRange.Container;
-            int index = containerRange.StartIndex;
             List<ICompiledStructure> result = new();
-            while (index < containerRange.EndIndex)
+            if (endIndex < 0)
+            {
+                endIndex = container.content.Count;
+            }
+            while (index < endIndex)
             {
                 var weave = AnalyzeWeave(container, index);
                 if (weave != null)
@@ -135,7 +132,7 @@ namespace inkdc
             {
                 Container startContentContainer = (Container)cursor.Container.namedContent["s"];
                 // last element is divert to $r, need to skip it from decompilation
-                choiceData.StartContent = AnalyzeContainerRange(new(startContentContainer, 0, startContentContainer.content.Count - 1));
+                choiceData.StartContent = AnalyzeContainer(startContentContainer, 0, startContentContainer.content.Count - 1);
                 if (cursor.SkipToLabel("$r1"))
                 {
                     cursor.SkipControlCommand(ControlCommand.CommandType.EndString);
@@ -144,11 +141,15 @@ namespace inkdc
             if (choicePoint.hasChoiceOnlyContent)
             {
                 cursor.SkipControlCommand(ControlCommand.CommandType.BeginString);
-                choiceData.ChoiceOnlyContent = AnalyzeContainerRange(cursor.SubListTo(ControlCommand.CommandType.EndString));
+                int startIndex = cursor.Index;
+                cursor.SkipToControlCommand(ControlCommand.CommandType.EndString);
+                choiceData.ChoiceOnlyContent = AnalyzeContainer(container, startIndex, cursor.Index - 1);
             }
             if (choicePoint.hasCondition)
             {
-                choiceData.Condition = AnalyzeExpression(cursor.SubListTo(ControlCommand.CommandType.EvalEnd).Elements);
+                int startIndex = cursor.Index;
+                cursor.SkipToControlCommand(ControlCommand.CommandType.EvalEnd);
+                choiceData.Condition = AnalyzeExpression(container, startIndex, cursor.Index - 1);
             }
 
             var target = Story.ContentAtPath(choicePoint.pathOnChoice).container;
@@ -159,7 +160,7 @@ namespace inkdc
                 {
                     targetCursor.SkipToLabel("$r2");
                 }
-                choiceData.InnerContent = AnalyzeContainerRange(targetCursor.Tail());
+                choiceData.InnerContent = AnalyzeContainer(target, targetCursor.Index);
             }
 
             return choiceData;
@@ -223,7 +224,7 @@ namespace inkdc
                     }
                     var gatherContainer = searchResult.container != null ? searchResult.container : searchResult.correctObj.parent as Container;
                     var gatherIndex = searchResult.container != null ? 0 : maybeGatherPath.lastComponent.index;
-                    gatherContent = AnalyzeContainerRange(new ContainerRange(gatherContainer, gatherIndex, gatherContainer.content.Count));
+                    gatherContent = AnalyzeContainer(gatherContainer, gatherIndex);
                     outerGatherPath = maybeGatherPath;
                 }
             }
@@ -291,7 +292,7 @@ namespace inkdc
                     if (branchContainer != null)
                     {
                         // first element is a PopGeneratedValue(), last is divert back
-                        branches.Add(AnalyzeContainerRange(new ContainerRange(branchContainer, 1, branchContainer.content.Count - 1)));
+                        branches.Add(AnalyzeContainer(branchContainer, 1, branchContainer.content.Count - 1));
                     }
                 }
                 cursor.TakeNext();
@@ -329,7 +330,7 @@ namespace inkdc
                 {
                     var branchContainer = divert.targetPointer.container;
                     // last element is divert to rejoin target
-                    branches.Add(AnalyzeContainerRange(new ContainerRange(branchContainer, 0, branchContainer.content.Count - 1)));
+                    branches.Add(AnalyzeContainer(branchContainer, 0, branchContainer.content.Count - 1));
                 }
                 else
                 {
@@ -340,15 +341,16 @@ namespace inkdc
             if (cursor.Current.IsControlCommand(ControlCommand.CommandType.NoOp))
             {
                 cursor.TakeNext();
-                return new ConditionalData(AnalyzeExpression(new ContainerRange(container, conditionStart, conditionEnd).Elements),
+                return new ConditionalData(AnalyzeExpression(container, conditionStart, conditionEnd),
                     branches, cursor.Index);
             }
 
             return null;
         }
 
-        public ICompiledStructure AnalyzeExpression(List<Ink.Runtime.Object> expression)
+        public ICompiledStructure AnalyzeExpression(Container container, int startIndex, int endIndex)
         {
+            List<Ink.Runtime.Object> expression = container.content.GetRange(startIndex, endIndex - startIndex);
             Stack<ICompiledStructure> stack = new();
             foreach (Ink.Runtime.Object obj in expression)
             {
@@ -801,23 +803,6 @@ namespace inkdc
         }
     }
 
-    public class ContainerRange
-    {
-        public ContainerRange(Container container, int startIndex, int endIndex)
-        {
-            Container = container;
-            StartIndex = startIndex;
-            EndIndex = endIndex;
-        }
-
-        public Container Container { get; }
-        public int StartIndex { get; }
-        public int EndIndex { get; }
-        public int Count => EndIndex - StartIndex;
-        public List<Ink.Runtime.Object> Elements =>
-            Container.content.GetRange(StartIndex, Count);
-    }
-
     class ContainerCursor
     {
         public Container Container { get; private set; }
@@ -881,28 +866,6 @@ namespace inkdc
                 Index++;
             }
             return false;
-        }
-
-        public ContainerRange SubListTo(ControlCommand.CommandType commandType)
-        {
-            var start = Index;
-            while (Index < Container.content.Count)
-            {
-                if (Container.content[Index] is ControlCommand command &&
-                    command.commandType == commandType)
-                {
-                    break;
-                }
-                Index++;
-            }
-            var result = new ContainerRange(Container, start, Index);
-            Index++;
-            return result;
-        }
-
-        public ContainerRange Tail()
-        {
-            return new(Container, Index, content.Count);
         }
     }
 

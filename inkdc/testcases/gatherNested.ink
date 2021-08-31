@@ -6,7 +6,7 @@
 * * "Myself!"
 - - "You must be joking!"
 * * "Mon ami, I am deadly serious."
-* *	"If only..."
+* * "If only..."
 * "Suicide!"
 "Really, Poirot? Are you quite sure?"
 * * "Quite sure."
