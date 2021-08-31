@@ -199,6 +199,7 @@ namespace inkdc
                 }
             }
             CompiledContainer gatherContent = null;
+            Path outerGatherPath = null;
             if (maybeGatherPath != null)
             {
                 SearchResult searchResult = Story.ContentAtPath(maybeGatherPath);
@@ -206,25 +207,35 @@ namespace inkdc
                 {
                     foreach (var choice in choices)
                     {
-                        choice.InnerContent.RemoveAt(choice.InnerContent.Count - 1);
+                        var lastObj = choice.InnerContent.Last();
+                        if (lastObj is CompiledObject obj && obj.Obj is Divert)
+                        {
+                            choice.InnerContent.RemoveAt(choice.InnerContent.Count - 1);
+                        }
+                        else if (lastObj is CompiledContainer lastContainer && lastContainer.Last() is WeaveData weave)
+                        {
+                            weave.GatherContent = null;
+                        }
                     }
                     gatherContent = AnalyzeContainerRange(new ContainerRange(searchResult.container, 0, searchResult.container.content.Count));
+                    outerGatherPath = maybeGatherPath;
                 }
             }
-            return new WeaveData(choices, gatherContent, index);
+            return new WeaveData(choices, gatherContent, outerGatherPath, index);
         }
 
         Path ExtractGatherPath(ChoiceData choice)
         {
             if (choice.InnerContent.Count == 0) return null;
-            if (choice.InnerContent.At(choice.InnerContent.Count-1) is CompiledObject obj &&
-                obj.Obj is Divert divert)
+            var lastElement = choice.InnerContent.At(choice.InnerContent.Count - 1);
+            if (lastElement is CompiledObject obj && obj.Obj is Divert divert)
             {
-                var path = divert.targetPath;
-                if (path != null)
-                {
-                    return path;
-                }
+                return divert.targetPath;
+            }
+            if (lastElement is CompiledContainer container &&
+                container.At(container.Count-1) is WeaveData weaveData)
+            {
+                return weaveData.OuterGatherPath;
             }
             return null;
         }
@@ -463,6 +474,7 @@ namespace inkdc
 
         public int Count => content.Count;
         public ICompiledStructure At(int i) => content[i];
+        public ICompiledStructure Last() => content[content.Count - 1];
 
         public void RemoveAt(int index)
         {
@@ -653,15 +665,17 @@ namespace inkdc
 
     class WeaveData : ICompiledStructure
     {
-        public WeaveData(List<ChoiceData> choices, CompiledContainer gatherContent, int endIndex)
+        public WeaveData(List<ChoiceData> choices, CompiledContainer gatherContent, Path outerGatherPath, int endIndex)
         {
             Choices = choices;
             GatherContent = gatherContent;
+            OuterGatherPath = outerGatherPath;
             EndIndex = endIndex;
         }
 
         public List<ChoiceData> Choices { get; }
-        public CompiledContainer GatherContent { get; }
+        public CompiledContainer GatherContent { get; set; }
+        public Path OuterGatherPath { get; }
         public int EndIndex { get; }
 
         public void Decompile(StoryDecompiler dc)
