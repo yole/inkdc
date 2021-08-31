@@ -19,11 +19,23 @@ namespace inkdc
         public string DecompileRoot()
         {
             Container mainContentContainer = Story.mainContentContainer;
+            if (mainContentContainer.namedOnlyContent != null)
+            {
+                Ink.Runtime.Object globalContainer;
+                if (mainContentContainer.namedOnlyContent.TryGetValue("global decl", out globalContainer))
+                {
+                    AnalyzeContainer(globalContainer as Container).Decompile(this);
+                }
+            }
             AnalyzeContainer(mainContentContainer).Decompile(this);
             if (mainContentContainer.namedOnlyContent != null)
             {
                 foreach (string name in mainContentContainer.namedOnlyContent.Keys)
                 {
+                    if (name == "global decl")
+                    {
+                        continue;
+                    }
                     var namedContent = mainContentContainer.namedOnlyContent[name];
                     if (namedContent is Container namedContainer)
                     {
@@ -39,6 +51,14 @@ namespace inkdc
         public void Out(string text)
         {
             result.Append(text);
+        }
+
+        public void EnsureNewLine()
+        {
+            if (result.Length > 0 && result[result.Length - 1] != '\n')
+            {
+                result.Append("\n");
+            }
         }
 
         void DecompileKnot(Container container)
@@ -94,7 +114,12 @@ namespace inkdc
                         result.Add(conditional);
                         continue;
                     }
-                    
+                    var embedded = AnalyzeEmbeddedExpression(container, ref index);
+                    if (embedded != null)
+                    {
+                        result.AddRange(embedded);
+                        continue;
+                    }
                 }
                 if (container.content[index] is Container child)
                 {
@@ -351,6 +376,43 @@ namespace inkdc
             return null;
         }
 
+        List<ICompiledStructure> AnalyzeEmbeddedExpression(Container container, ref int index)
+        {
+            var result = new List<ICompiledStructure>();
+            var cursor = new ContainerCursor(container, index);
+            cursor.SkipControlCommand(ControlCommand.CommandType.EvalStart);
+            while (true)
+            {
+                int initializerStartIndex = cursor.Index;
+                if (!cursor.SkipToVarAssign())
+                {
+                    break;
+                }
+                var varAssign = container.content[cursor.Index - 1] as VariableAssignment;
+                var initializer = AnalyzeExpression(container, initializerStartIndex, cursor.Index - 1);
+                result.Add(new VariableAssignmentExpression(varAssign.variableName, initializer, container.name == "global decl"));
+            }
+
+            int expressionStart = cursor.Index;
+            if (!cursor.SkipToControlCommand(ControlCommand.CommandType.EvalEnd))
+            {
+                return null;
+            }
+            if (cursor.Index - expressionStart > 1)
+            {
+                if (cursor.Container.content[cursor.Index - 2].IsControlCommand(ControlCommand.CommandType.EvalOutput))
+                {
+                    result.Add(new EmbeddedExpression(AnalyzeExpression(container, expressionStart, cursor.Index - 2)));
+                }
+                else
+                {
+                    result.Add(new StatementExpression(AnalyzeExpression(container, expressionStart, cursor.Index - 1)));
+                }
+            }
+            index = cursor.Index;
+            return result;
+        }
+
         public ICompiledStructure AnalyzeExpression(Container container, int startIndex, int endIndex)
         {
             List<Ink.Runtime.Object> expression = container.content.GetRange(startIndex, endIndex - startIndex);
@@ -395,6 +457,11 @@ namespace inkdc
                     {
                         var operand = stack.Pop();
                         stack.Push(new FunctionCall("TURNS_SINCE", new() { operand }));
+                    }
+                    else if (controlCommand.commandType == ControlCommand.CommandType.BeginString ||
+                        controlCommand.commandType == ControlCommand.CommandType.EndString)
+                    {
+                        // TODO ignore for now
                     }
                     else
                     {
@@ -452,7 +519,8 @@ namespace inkdc
             }
             else if (Obj is ControlCommand controlCommand)
             {
-                if (controlCommand.commandType != ControlCommand.CommandType.Done)
+                if (controlCommand.commandType != ControlCommand.CommandType.Done &&
+                    controlCommand.commandType != ControlCommand.CommandType.End)
                 {
                     throw new NotSupportedException("Don't know how to decompile " + Obj);
                 }
@@ -521,6 +589,10 @@ namespace inkdc
             if (value is DivertTargetValue divertTargetValue)
             {
                 dc.Out("-> " + divertTargetValue.CompactPathString(divertTargetValue.targetPath));
+            }
+            else if (value is StringValue stringValue)
+            {
+                dc.Out("\"" + stringValue + "\"");
             }
             else
             {
@@ -638,6 +710,62 @@ namespace inkdc
                 Operands[i].Decompile(dc);
             }
             dc.Out(")");
+        }
+    }
+
+    class EmbeddedExpression : ICompiledStructure
+    {
+        private readonly ICompiledStructure expression;
+
+        public EmbeddedExpression(ICompiledStructure expression)
+        {
+            this.expression = expression;
+        }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            dc.Out("{");
+            expression.Decompile(dc);
+            dc.Out("}");
+        }
+    }
+
+    class StatementExpression : ICompiledStructure
+    {
+        private readonly ICompiledStructure expression;
+
+        public StatementExpression(ICompiledStructure expression)
+        {
+            this.expression = expression;
+        }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            dc.EnsureNewLine();
+            dc.Out("~ ");
+            expression.Decompile(dc);
+        }
+    }
+
+    class VariableAssignmentExpression : ICompiledStructure
+    {
+        private readonly string variableName;
+        private readonly ICompiledStructure initializer;
+        private readonly bool global;
+
+        public VariableAssignmentExpression(string variableName, ICompiledStructure initializer, bool global)
+        {
+            this.variableName = variableName;
+            this.initializer = initializer;
+            this.global = global;
+        }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            dc.Out(global ? "VAR " : "~ ");
+            dc.Out(variableName + " = ");
+            initializer.Decompile(dc);
+            dc.Out("\n");
         }
     }
 
@@ -845,6 +973,19 @@ namespace inkdc
                     return true;
                 }
                 Index++;
+            }
+            return false;
+        }
+
+        public bool SkipToVarAssign()
+        {
+            for (int targetIndex = Index; targetIndex < content.Count; targetIndex++)
+            {
+                if (content[targetIndex] is VariableAssignment)
+                {
+                    Index = targetIndex + 1;
+                    return true;
+                }
             }
             return false;
         }
