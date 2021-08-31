@@ -68,36 +68,33 @@ namespace inkdc
             }
             while (index < endIndex)
             {
-                var weave = AnalyzeWeave(container, index);
+                var weave = AnalyzeWeave(container, ref index);
                 if (weave != null)
                 {
                     result.Add(weave);
-                    index = weave.EndIndex;
                     continue;
                 }
                 if (container.content[index].IsControlCommand(ControlCommand.CommandType.EvalStart))
                 {
-                    var choice = AnalyzeChoice(container, index);
+                    var choice = AnalyzeChoice(container, ref index);
                     if (choice != null)
                     {
                         result.Add(choice);
-                        index = choice.EndIndex;
                         continue;
                     }
-                    var sequence = AnalyzeSequence(container, index);
+                    var sequence = AnalyzeSequence(container, ref index);
                     if (sequence != null)
                     {
                         result.Add(sequence);
-                        index = sequence.EndIndex;
                         continue;
                     }
-                    var conditional = AnalyzeConditional(container, index);
+                    var conditional = AnalyzeConditional(container, ref index);
                     if (conditional != null)
                     {
                         result.Add(conditional);
-                        index = conditional.EndIndex;
                         continue;
                     }
+                    
                 }
                 if (container.content[index] is Container child)
                 {
@@ -112,7 +109,7 @@ namespace inkdc
             return new CompiledContainer(result);
         }
 
-        ChoiceData AnalyzeChoice(Container container, int index)
+        ChoiceData AnalyzeChoice(Container container, ref int index)
         {
             if (!container.content[index].IsControlCommand(ControlCommand.CommandType.EvalStart))
             {
@@ -124,7 +121,7 @@ namespace inkdc
             if (choicePointIndex < 0) return null;
 
             ChoicePoint choicePoint = (ChoicePoint)content[choicePointIndex];
-            ChoiceData choiceData = new(choicePoint, choicePointIndex + 1);
+            ChoiceData choiceData = new(choicePoint);
             ContainerCursor cursor = new(container, choiceStart);
             cursor.SkipControlCommand(ControlCommand.CommandType.EvalStart);
 
@@ -163,21 +160,24 @@ namespace inkdc
                 choiceData.InnerContent = AnalyzeContainer(target, targetCursor.Index);
             }
 
+            index = choicePointIndex + 1;
             return choiceData;
         }
 
-        WeaveData AnalyzeWeave(Container container, int index)
+        WeaveData AnalyzeWeave(Container container, ref int index)
         {
             List<ChoiceData> choices = new();
+            int localIndex = index;
             while (true)
             {
-                if (index < container.content.Count &&
-                    container.content [index] is Container childContainer)
+                if (localIndex < container.content.Count &&
+                    container.content [localIndex] is Container childContainer)
                 {
-                    ChoiceData choice = AnalyzeChoice(childContainer, 0);
+                    var childIndex = 0;
+                    ChoiceData choice = AnalyzeChoice(childContainer, ref childIndex);
                     if (choice == null) break;
                     choices.Add(choice);
-                    index++;
+                    localIndex++;
                 }
                 else
                 {
@@ -228,7 +228,8 @@ namespace inkdc
                     outerGatherPath = maybeGatherPath;
                 }
             }
-            return new WeaveData(choices, gatherContent, outerGatherPath, index);
+            index = localIndex;
+            return new WeaveData(choices, gatherContent, outerGatherPath);
         }
 
         Path ExtractGatherPath(ChoiceData choice)
@@ -261,7 +262,7 @@ namespace inkdc
             return null;
         }
 
-        SequenceData AnalyzeSequence(Container container, int index)
+        SequenceData AnalyzeSequence(Container container, ref int index)
         {
             var cursor = new ContainerCursor(container, index);
             cursor.SkipControlCommand(ControlCommand.CommandType.EvalStart);
@@ -302,7 +303,8 @@ namespace inkdc
                 return null;
             }
             cursor.SkipControlCommand(ControlCommand.CommandType.NoOp);
-            return new SequenceData(cursor.Index, branches, cycle, shuffle);
+            index = cursor.Index;
+            return new SequenceData(branches, cycle, shuffle);
         }
 
         private static bool IsSequenceBranchDivert(Divert divert)
@@ -313,7 +315,7 @@ namespace inkdc
             return name != null && name.StartsWith("s") && targetPointer.index == 0;
         }
 
-        ConditionalData AnalyzeConditional(Container container, int index)
+        ConditionalData AnalyzeConditional(Container container, ref int index)
         {
             var cursor = new ContainerCursor(container, index);
             cursor.SkipControlCommand(ControlCommand.CommandType.EvalStart);
@@ -341,8 +343,9 @@ namespace inkdc
             if (cursor.Current.IsControlCommand(ControlCommand.CommandType.NoOp))
             {
                 cursor.TakeNext();
+                index = cursor.Index;
                 return new ConditionalData(AnalyzeExpression(container, conditionStart, conditionEnd),
-                    branches, cursor.Index);
+                    branches);
             }
 
             return null;
@@ -640,10 +643,9 @@ namespace inkdc
 
     class ChoiceData : ICompiledStructure
     {
-        public ChoiceData(ChoicePoint choice, int endIndex)
+        public ChoiceData(ChoicePoint choice)
         {
             Choice = choice;
-            EndIndex = endIndex;
         }
 
         public CompiledContainer StartContent { get; set; }
@@ -651,7 +653,6 @@ namespace inkdc
         public ICompiledStructure Condition { get; set; }
         public CompiledContainer InnerContent { get; set; }
         public ChoicePoint Choice { get; }
-        public int EndIndex { get; }
 
         public void Decompile(StoryDecompiler dc)
         {
@@ -687,18 +688,16 @@ namespace inkdc
 
     class WeaveData : ICompiledStructure
     {
-        public WeaveData(List<ChoiceData> choices, CompiledContainer gatherContent, Path outerGatherPath, int endIndex)
+        public WeaveData(List<ChoiceData> choices, CompiledContainer gatherContent, Path outerGatherPath)
         {
             Choices = choices;
             GatherContent = gatherContent;
             OuterGatherPath = outerGatherPath;
-            EndIndex = endIndex;
         }
 
         public List<ChoiceData> Choices { get; }
         public CompiledContainer GatherContent { get; set; }
         public Path OuterGatherPath { get; }
-        public int EndIndex { get; }
 
         public void Decompile(StoryDecompiler dc)
         {
@@ -727,9 +726,8 @@ namespace inkdc
 
     class SequenceData : ICompiledStructure
     {
-        public SequenceData(int endIndex, List<CompiledContainer> branches, bool cycle, bool shuffle) 
+        public SequenceData(List<CompiledContainer> branches, bool cycle, bool shuffle) 
         {
-            EndIndex = endIndex;
             Branches = branches;
             Cycle = cycle;
             Shuffle = shuffle;
@@ -738,7 +736,6 @@ namespace inkdc
         public List<CompiledContainer> Branches { get; }
         public bool Cycle { get; }
         public bool Shuffle { get; }
-        public int EndIndex { get; }
 
         public void Decompile(StoryDecompiler dc)
         {
@@ -773,16 +770,14 @@ namespace inkdc
 
     class ConditionalData : ICompiledStructure
     {
-        public ConditionalData(ICompiledStructure condition, List<CompiledContainer> branches, int endIndex)
+        public ConditionalData(ICompiledStructure condition, List<CompiledContainer> branches)
         {
             Condition = condition;
             Branches = branches;
-            EndIndex = endIndex;
         }
 
         public ICompiledStructure Condition { get; }
         public List<CompiledContainer> Branches { get; }
-        public int EndIndex { get; }
 
         public void Decompile(StoryDecompiler dc)
         {
