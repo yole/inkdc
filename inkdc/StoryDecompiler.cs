@@ -14,11 +14,12 @@ namespace inkdc
 
         public Story Story { get; }
         private StringBuilder result = new StringBuilder();
+        public int ChoiceNesting { get; set; }
 
         public string DecompileRoot()
         {
             Container mainContentContainer = Story.mainContentContainer;
-            DecompileContainer(mainContentContainer);
+            AnalyzeContainer(mainContentContainer).Decompile(this);
             if (mainContentContainer.namedOnlyContent != null)
             {
                 foreach (string name in mainContentContainer.namedOnlyContent.Keys)
@@ -35,14 +36,14 @@ namespace inkdc
             return result.ToString();
         }
 
-        void Out(string text)
+        public void Out(string text)
         {
             result.Append(text);
         }
 
         void DecompileKnot(Container container)
         {
-            DecompileContainer(container);
+            AnalyzeContainer(container).Decompile(this);
 
             if (container.namedOnlyContent != null)
             {
@@ -52,27 +53,28 @@ namespace inkdc
                     if (namedContent is Container namedContainer)
                     {
                         Out("= " + name + "\n");
-                        DecompileContainer(namedContainer); 
+                        AnalyzeContainer(namedContainer).Decompile(this);
                     }
                 }
             }
         }
 
-        void DecompileContainer(Container container)
+        CompiledContainer AnalyzeContainer(Container container)
         {
-            DecompileContainerRange(new ContainerRange(container, 0, container.content.Count));
+            return AnalyzeContainerRange(new ContainerRange(container, 0, container.content.Count));
         }
 
-        void DecompileContainerRange(ContainerRange containerRange)
+        public CompiledContainer AnalyzeContainerRange(ContainerRange containerRange)
         {
             Container container = containerRange.Container;
             int index = containerRange.StartIndex;
+            List<ICompiledStructure> result = new();
             while (index < containerRange.EndIndex)
             {
                 var weave = AnalyzeWeave(container, index);
                 if (weave != null)
                 {
-                    DecompileWeave(weave);
+                    result.Add(weave);
                     index = weave.EndIndex;
                     continue;
                 }
@@ -81,98 +83,36 @@ namespace inkdc
                     var choice = AnalyzeChoice(container, index);
                     if (choice != null)
                     {
-                        DecompileChoice(choice);
+                        result.Add(choice);
                         index = choice.EndIndex;
                         continue;
                     }
                     var sequence = AnalyzeSequence(container, index);
                     if (sequence != null)
                     {
-                        DecompileSequence(sequence);
+                        result.Add(sequence);
                         index = sequence.EndIndex;
                         continue;
                     }
                     var conditional = AnalyzeConditional(container, index);
                     if (conditional != null)
                     {
-                        DecompileConditional(conditional);
+                        result.Add(conditional);
                         index = conditional.EndIndex;
                         continue;
                     }
                 }
-                DecompileObject(container.content[index++]);
-            }
-        }
-
-        private void DecompileObject(Ink.Runtime.Object item)
-        {
-            if (item is Container childContainer)
-            {
-                DecompileContainer(childContainer);
-            }
-            else if (item is StringValue stringValue)
-            {
-                Out(stringValue.value);
-            }
-            else if (item is Divert divert)
-            {
-                if (!IsGeneratedDivert(divert))
+                if (container.content[index] is Container child)
                 {
-                    Out("-> " + divert.targetPathString + "\n");
+                    result.Add(AnalyzeContainer(child));
                 }
-            }
-            else if (item is ControlCommand controlCommand)
-            {
-                if (controlCommand.commandType != ControlCommand.CommandType.Done)
+                else
                 {
-                    throw new NotSupportedException("Don't know how to decompile " + item);
+                    result.Add(new CompiledObject(container.content[index]));
                 }
+                index++;
             }
-            else
-            {
-                throw new NotSupportedException("Don't know how to decompile " + item);
-            }
-        }
-
-        private bool IsGeneratedDivert(Divert divert)
-        {
-            SearchResult searchResult = Story.ContentAtPath(divert.targetPath);
-            if (searchResult.container != null && searchResult.container.IsDone())
-            {
-                return true;
-            }
-            if (divert.parent is Container container && container.content.Count == 1 &&
-                divert.targetPath.lastComponent.index == 0)
-            {
-                // divert to first stitch in a knot
-                return true;
-            }
-            return false;
-        }
-
-        void DecompileChoice(ChoiceData choiceData)
-        {
-            Out(choiceData.Choice.onceOnly ? "* " : "+ ");
-            if (choiceData.Condition != null)
-            {
-                Out("{ ");
-                Out(DecompileExpression(choiceData.Condition.Elements));
-                Out(" } ");
-            }
-            if (choiceData.StartContent != null)
-            {
-                DecompileContainerRange(choiceData.StartContent);
-            }
-            if (choiceData.ChoiceOnlyContent != null)
-            {
-                Out("[");
-                DecompileContainerRange(choiceData.ChoiceOnlyContent);
-                Out("]");
-            }
-            if (choiceData.InnerContent != null)
-            {
-                DecompileContainerRange(choiceData.InnerContent);
-            }
+            return new CompiledContainer(result);
         }
 
         ChoiceData AnalyzeChoice(Container container, int index)
@@ -195,7 +135,7 @@ namespace inkdc
             {
                 Container startContentContainer = (Container)cursor.Container.namedContent["s"];
                 // last element is divert to $r, need to skip it from decompilation
-                choiceData.StartContent = new(startContentContainer, 0, startContentContainer.content.Count - 1);
+                choiceData.StartContent = AnalyzeContainerRange(new(startContentContainer, 0, startContentContainer.content.Count - 1));
                 if (cursor.SkipToLabel("$r1"))
                 {
                     cursor.SkipControlCommand(ControlCommand.CommandType.EndString);
@@ -204,11 +144,11 @@ namespace inkdc
             if (choicePoint.hasChoiceOnlyContent)
             {
                 cursor.SkipControlCommand(ControlCommand.CommandType.BeginString);
-                choiceData.ChoiceOnlyContent = cursor.SubListTo(ControlCommand.CommandType.EndString);
+                choiceData.ChoiceOnlyContent = AnalyzeContainerRange(cursor.SubListTo(ControlCommand.CommandType.EndString));
             }
             if (choicePoint.hasCondition)
             {
-                choiceData.Condition = cursor.SubListTo(ControlCommand.CommandType.EvalEnd);
+                choiceData.Condition = AnalyzeExpression(cursor.SubListTo(ControlCommand.CommandType.EvalEnd).Elements);
             }
 
             var target = Story.ContentAtPath(choicePoint.pathOnChoice).container;
@@ -219,7 +159,7 @@ namespace inkdc
                 {
                     targetCursor.SkipToLabel("$r2");
                 }
-                choiceData.InnerContent = targetCursor.Tail();
+                choiceData.InnerContent = AnalyzeContainerRange(targetCursor.Tail());
             }
 
             return choiceData;
@@ -258,7 +198,7 @@ namespace inkdc
                     }
                 }
             }
-            ContainerRange gatherContent = null;
+            CompiledContainer gatherContent = null;
             if (maybeGatherPath != null)
             {
                 SearchResult searchResult = Story.ContentAtPath(maybeGatherPath);
@@ -266,9 +206,9 @@ namespace inkdc
                 {
                     foreach (var choice in choices)
                     {
-                        choice.InnerContent = choice.InnerContent.SubRange(0, choice.InnerContent.Count - 1);
+                        choice.InnerContent.RemoveAt(choice.InnerContent.Count - 1);
                     }
-                    gatherContent = new ContainerRange(searchResult.container, 0, searchResult.container.content.Count);
+                    gatherContent = AnalyzeContainerRange(new ContainerRange(searchResult.container, 0, searchResult.container.content.Count));
                 }
             }
             return new WeaveData(choices, gatherContent, index);
@@ -277,7 +217,8 @@ namespace inkdc
         Path ExtractGatherPath(ChoiceData choice)
         {
             if (choice.InnerContent.Count == 0) return null;
-            if (choice.InnerContent.At(choice.InnerContent.Count-1) is Divert divert)
+            if (choice.InnerContent.At(choice.InnerContent.Count-1) is CompiledObject obj &&
+                obj.Obj is Divert divert)
             {
                 var path = divert.targetPath;
                 if (path != null)
@@ -286,25 +227,6 @@ namespace inkdc
                 }
             }
             return null;
-        }
-
-        void DecompileWeave(WeaveData weave)
-        {
-            foreach (var choice in weave.Choices)
-            {
-                DecompileChoice(choice);
-            }
-            if (weave.GatherContent != null && !IsGeneratedGather(weave.GatherContent))
-            {
-                Out("- ");
-                DecompileContainerRange(weave.GatherContent);
-            }
-        }
-
-        bool IsGeneratedGather(ContainerRange containerRange)
-        {
-            return containerRange.Count == 1 &&
-                containerRange.At(0).IsControlCommand(ControlCommand.CommandType.Done);
         }
 
         SequenceData AnalyzeSequence(Container container, int index)
@@ -329,7 +251,7 @@ namespace inkdc
             {
                 shuffle = true;
             }
-            var branches = new List<ContainerRange>();
+            var branches = new List<CompiledContainer>();
             while (!cursor.AtEnd() && !cursor.Current.IsControlCommand(ControlCommand.CommandType.NoOp))
             {
                 if (cursor.Current is Divert divert && IsSequenceBranchDivert(divert))
@@ -338,7 +260,7 @@ namespace inkdc
                     if (branchContainer != null)
                     {
                         // first element is a PopGeneratedValue(), last is divert back
-                        branches.Add(new ContainerRange(branchContainer, 1, branchContainer.content.Count - 1));
+                        branches.Add(AnalyzeContainerRange(new ContainerRange(branchContainer, 1, branchContainer.content.Count - 1)));
                     }
                 }
                 cursor.TakeNext();
@@ -349,36 +271,6 @@ namespace inkdc
             }
             cursor.SkipControlCommand(ControlCommand.CommandType.NoOp);
             return new SequenceData(cursor.Index, branches, cycle, shuffle);
-        }
-
-        void DecompileSequence(SequenceData sequence)
-        {
-            var branches = sequence.Branches;
-            Out("{");
-            if (sequence.Cycle)
-            {
-                Out("&");
-            }
-            else if (sequence.Shuffle)
-            {
-                Out("~");
-            }
-            else if (branches.Count > 2 && branches[branches.Count-1].Count == 0)
-            {
-                Out("!");
-                branches = branches.GetRange(0, branches.Count - 1);
-            }
-            var first = true;
-            foreach (var branch in branches)
-            {
-                if (!first)
-                {
-                    Out("|");
-                }
-                first = false;
-                DecompileContainerRange(branch);
-            }
-            Out("}");
         }
 
         private static bool IsSequenceBranchDivert(Divert divert)
@@ -399,14 +291,14 @@ namespace inkdc
                 return null;
             }
             int conditionEnd = cursor.Index - 1;
-            List<ContainerRange> branches = new();
+            List<CompiledContainer> branches = new();
             while (cursor.Current is Container nestedContainer)
             {
                 if (nestedContainer.content[0] is Divert divert)
                 {
                     var branchContainer = divert.targetPointer.container;
                     // last element is divert to rejoin target
-                    branches.Add(new ContainerRange(branchContainer, 0, branchContainer.content.Count - 1));
+                    branches.Add(AnalyzeContainerRange(new ContainerRange(branchContainer, 0, branchContainer.content.Count - 1)));
                 }
                 else
                 {
@@ -417,60 +309,28 @@ namespace inkdc
             if (cursor.Current.IsControlCommand(ControlCommand.CommandType.NoOp))
             {
                 cursor.TakeNext();
-                return new ConditionalData(new ContainerRange(container, conditionStart, conditionEnd),
+                return new ConditionalData(AnalyzeExpression(new ContainerRange(container, conditionStart, conditionEnd).Elements),
                     branches, cursor.Index);
             }
 
             return null;
         }
 
-        void DecompileConditional(ConditionalData conditional)
+        public ICompiledStructure AnalyzeExpression(List<Ink.Runtime.Object> expression)
         {
-            Out("{");
-            Out(DecompileExpression(conditional.Condition.Elements));
-            Out(":");
-            DecompileContainerRange(conditional.Branches[0]);
-            if (conditional.Branches.Count == 2)
-            {
-                Out("|");
-                DecompileContainerRange(conditional.Branches[1]);
-            }
-            else if (conditional.Branches.Count > 2)
-            {
-                throw new NotSupportedException("Don't know how to decompile >2 branches");
-            }
-            Out("}");
-        }
-
-        string DecompileExpression(List<Ink.Runtime.Object> expression)
-        {
-            Stack<String> stack = new();
+            Stack<ICompiledStructure> stack = new();
             foreach (Ink.Runtime.Object obj in expression)
             {
                 if (obj is VariableReference varRef)
                 {
-                    if (varRef.name != null)
-                    {
-                        stack.Push(varRef.name);
-                    }
-                    else
-                    {
-                        stack.Push(varRef.pathStringForCount);
-                    }
+                    stack.Push(new CompiledVarRef(varRef));
                 }
                 else if (obj is NativeFunctionCall call)
                 {
                     if (call.name == "!")
                     {
                         var operand = stack.Pop();
-                        if (operand.Contains(" "))
-                        {
-                            stack.Push("not(" + operand + ")");
-                        }
-                        else
-                        {
-                            stack.Push("not " + operand);
-                        }
+                        stack.Push(new UnaryExpression("not", operand));
                     }
                     else if (_binaryOperators.Contains(call.name))
                     {
@@ -481,33 +341,29 @@ namespace inkdc
                         throw new NotSupportedException("Don't know how to decompile " + obj);
                     }
                 }
-                else if (obj is IntValue || obj is BoolValue)
+                else if (obj is Value)
                 {
-                    stack.Push(obj.ToString());
+                    stack.Push(new CompiledValue(obj as Value));
                 }
                 else if (obj is ControlCommand controlCommand)
                 {
                     if (controlCommand.commandType == ControlCommand.CommandType.ChoiceCount)
                     {
-                        stack.Push("CHOICE_COUNT()");
+                        stack.Push(new FunctionCall("CHOICE_COUNT", new()));
                     }
                     else if (controlCommand.commandType == ControlCommand.CommandType.Turns)
                     {
-                        stack.Push("TURNS()");
+                        stack.Push(new FunctionCall("TURNS", new()));
                     }
                     else if (controlCommand.commandType == ControlCommand.CommandType.TurnsSince)
                     {
                         var operand = stack.Pop();
-                        stack.Push("TURNS_SINCE(" + operand + ")");
+                        stack.Push(new FunctionCall("TURNS_SINCE", new() { operand }));
                     }
                     else
                     {
                         throw new NotSupportedException("Don't know how to decompile " + obj);
                     }
-                }
-                else if (obj is DivertTargetValue divertTargetValue)
-                {
-                    stack.Push("-> " + divertTargetValue.CompactPathString(divertTargetValue.targetPath));
                 }
                 else
                 {
@@ -518,19 +374,11 @@ namespace inkdc
             return stack.Pop();
         }
 
-        void BuildBinaryExpression(Stack<String> stack, string op)
+        void BuildBinaryExpression(Stack<ICompiledStructure> stack, string op)
         {
             var operand1 = stack.Pop();
             var operand2 = stack.Pop();
-            if (operand1.Contains(" "))
-            {
-                operand1 = "(" + operand1 + ")";
-            }
-            if (operand2.Contains(" "))
-            {
-                operand2 = "(" + operand2 + ")";
-            }
-            stack.Push(operand2 + " " + op + " " + operand1);
+            stack.Push(new BinaryExpression(op, operand2, operand1));
         }
 
         static HashSet<string> _binaryOperators = new()
@@ -539,7 +387,224 @@ namespace inkdc
         };
     }
 
-    class ChoiceData
+    public interface ICompiledStructure
+    {
+        void Decompile(StoryDecompiler dc);
+    }
+
+    class CompiledObject : ICompiledStructure
+    {
+        public Ink.Runtime.Object Obj { get; private set; }
+
+        public CompiledObject(Ink.Runtime.Object obj)
+        {
+            Obj = obj;
+        }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            if (Obj is StringValue stringValue)
+            {
+                dc.Out(stringValue.value);
+            }
+            else if (Obj is Divert divert)
+            {
+                if (!IsGeneratedDivert(dc, divert))
+                {
+                    dc.Out("-> " + divert.targetPathString + "\n");
+                }
+            }
+            else if (Obj is ControlCommand controlCommand)
+            {
+                if (controlCommand.commandType != ControlCommand.CommandType.Done)
+                {
+                    throw new NotSupportedException("Don't know how to decompile " + Obj);
+                }
+            }
+            else
+            {
+                throw new NotSupportedException("Don't know how to decompile " + Obj);
+            }
+        }
+
+        private bool IsGeneratedDivert(StoryDecompiler dc, Divert divert)
+        {
+            SearchResult searchResult = dc.Story.ContentAtPath(divert.targetPath);
+            if (searchResult.container != null && searchResult.container.IsDone())
+            {
+                return true;
+            }
+            if (divert.parent is Container container && container.content.Count == 1 &&
+                divert.targetPath.lastComponent.index == 0)
+            {
+                // divert to first stitch in a knot
+                return true;
+            }
+            return false;
+        }
+    }
+
+    public class CompiledContainer : ICompiledStructure
+    {
+        private readonly List<ICompiledStructure> content;
+
+        public CompiledContainer(List<ICompiledStructure> content)
+        {
+            this.content = content;
+        }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            foreach (var child in content)
+            {
+                child.Decompile(dc);
+            }
+        }
+
+        public int Count => content.Count;
+        public ICompiledStructure At(int i) => content[i];
+
+        public void RemoveAt(int index)
+        {
+            content.RemoveAt(index);
+        }
+    }
+
+    class CompiledValue : ICompiledStructure
+    {
+        private readonly Value value;
+
+        public CompiledValue(Value value)
+        {
+            this.value = value;
+        }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            if (value is DivertTargetValue divertTargetValue)
+            {
+                dc.Out("-> " + divertTargetValue.CompactPathString(divertTargetValue.targetPath));
+            }
+            else
+            {
+                dc.Out(value.ToString());
+            }
+        }
+    }
+
+    class CompiledVarRef : ICompiledStructure
+    {
+        private readonly VariableReference varRef;
+
+        public CompiledVarRef(VariableReference varRef)
+        {
+            this.varRef = varRef;
+        }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            if (varRef.name != null)
+            {
+                dc.Out(varRef.name);
+            }
+            else
+            {
+                dc.Out(varRef.pathStringForCount);
+            }
+        }
+    }
+
+    class UnaryExpression : ICompiledStructure
+    {
+        public UnaryExpression(string op, ICompiledStructure operand)
+        {
+            Op = op;
+            Operand = operand;
+        }
+
+        public string Op { get; }
+        public ICompiledStructure Operand { get; }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            dc.Out(Op + " ");
+            if (Operand is BinaryExpression)
+            {
+                dc.Out("(");
+                Operand.Decompile(dc);
+                dc.Out(")");
+            }
+            else
+            {
+                Operand.Decompile(dc);
+            }
+        }
+    }
+
+    class BinaryExpression : ICompiledStructure
+    {
+        public BinaryExpression(string op, ICompiledStructure operand1, ICompiledStructure operand2)
+        {
+            Op = op;
+            Operand1 = operand1;
+            Operand2 = operand2;
+        }
+
+        public string Op { get; }
+        public ICompiledStructure Operand1 { get; }
+        public ICompiledStructure Operand2 { get; }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            if (Operand1 is BinaryExpression || Operand1 is UnaryExpression)
+            {
+                dc.Out("(");
+            }
+            Operand1.Decompile(dc);
+            if (Operand1 is BinaryExpression || Operand1 is UnaryExpression)
+            {
+                dc.Out(")");
+            }
+            dc.Out(" " + Op + " ");
+            if (Operand2 is BinaryExpression || Operand2 is UnaryExpression)
+            {
+                dc.Out("(");
+            }
+            Operand2.Decompile(dc);
+            if (Operand2 is BinaryExpression || Operand2 is UnaryExpression)
+            {
+                dc.Out(")");
+            }
+        }
+    }
+
+    class FunctionCall : ICompiledStructure
+    {
+        public FunctionCall(string name, List<ICompiledStructure> operands)
+        {
+            Name = name;
+            Operands = operands;
+        }
+
+        public string Name { get; }
+        public List<ICompiledStructure> Operands { get; }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            dc.Out(Name + "(");
+            for (int i=0; i < Operands.Count; i++)
+            {
+                if (i > 0)
+                {
+                    dc.Out(", ");
+                }
+                Operands[i].Decompile(dc);
+            }
+            dc.Out(")");
+        }
+    }
+
+    class ChoiceData : ICompiledStructure
     {
         public ChoiceData(ChoicePoint choice, int endIndex)
         {
@@ -547,17 +612,48 @@ namespace inkdc
             EndIndex = endIndex;
         }
 
-        public ContainerRange StartContent { get; set; }
-        public ContainerRange ChoiceOnlyContent { get; set; }
-        public ContainerRange Condition { get; set; }
-        public ContainerRange InnerContent { get; set; }
+        public CompiledContainer StartContent { get; set; }
+        public CompiledContainer ChoiceOnlyContent { get; set; }
+        public ICompiledStructure Condition { get; set; }
+        public CompiledContainer InnerContent { get; set; }
         public ChoicePoint Choice { get; }
         public int EndIndex { get; }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            for (int i = 0; i < dc.ChoiceNesting; i++)
+            {
+                dc.Out("* ");
+            }
+            dc.Out(Choice.onceOnly ? "* " : "+ ");
+            if (Condition != null)
+            {
+                dc.Out("{ ");
+                Condition.Decompile(dc);
+                dc.Out(" } ");
+            }
+            if (StartContent != null)
+            {
+                StartContent.Decompile(dc);
+            }
+            if (ChoiceOnlyContent != null)
+            {
+                dc.Out("[");
+                ChoiceOnlyContent.Decompile(dc);
+                dc.Out("]");
+            }
+            if (InnerContent != null)
+            {
+                dc.ChoiceNesting++;
+                InnerContent.Decompile(dc);
+                dc.ChoiceNesting--;
+            }
+        }
     }
 
-    class WeaveData
+    class WeaveData : ICompiledStructure
     {
-        public WeaveData(List<ChoiceData> choices, ContainerRange gatherContent, int endIndex)
+        public WeaveData(List<ChoiceData> choices, CompiledContainer gatherContent, int endIndex)
         {
             Choices = choices;
             GatherContent = gatherContent;
@@ -565,13 +661,33 @@ namespace inkdc
         }
 
         public List<ChoiceData> Choices { get; }
-        public ContainerRange GatherContent { get; }
+        public CompiledContainer GatherContent { get; }
         public int EndIndex { get; }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            foreach (var choice in Choices)
+            {
+                choice.Decompile(dc);
+            }
+            if (GatherContent != null && !IsGeneratedGather(GatherContent))
+            {
+                dc.Out("- ");
+                GatherContent.Decompile(dc);
+            }
+        }
+
+        private bool IsGeneratedGather(CompiledContainer containerRange)
+        {
+            return containerRange.Count == 1 &&
+                containerRange.At(0) is CompiledObject obj &&
+                obj.Obj.IsControlCommand(ControlCommand.CommandType.Done);
+        }
     }
 
-    class SequenceData
+    class SequenceData : ICompiledStructure
     {
-        public SequenceData(int endIndex, List<ContainerRange> branches, bool cycle, bool shuffle) 
+        public SequenceData(int endIndex, List<CompiledContainer> branches, bool cycle, bool shuffle) 
         {
             EndIndex = endIndex;
             Branches = branches;
@@ -579,27 +695,75 @@ namespace inkdc
             Shuffle = shuffle;
         }
 
-        public List<ContainerRange> Branches { get; }
+        public List<CompiledContainer> Branches { get; }
         public bool Cycle { get; }
         public bool Shuffle { get; }
         public int EndIndex { get; }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            var branches = Branches;
+            dc.Out("{");
+            if (Cycle)
+            {
+                dc.Out("&");
+            }
+            else if (Shuffle)
+            {
+                dc.Out("~");
+            }
+            else if (branches.Count > 2 && branches[branches.Count - 1].Count == 0)
+            {
+                dc.Out("!");
+                branches = branches.GetRange(0, branches.Count - 1);
+            }
+            var first = true;
+            foreach (var branch in branches)
+            {
+                if (!first)
+                {
+                    dc.Out("|");
+                }
+                first = false;
+                branch.Decompile(dc);
+            }
+            dc.Out("}");
+        }
     }
 
-    class ConditionalData
+    class ConditionalData : ICompiledStructure
     {
-        public ConditionalData(ContainerRange condition, List<ContainerRange> branches, int endIndex)
+        public ConditionalData(ICompiledStructure condition, List<CompiledContainer> branches, int endIndex)
         {
             Condition = condition;
             Branches = branches;
             EndIndex = endIndex;
         }
 
-        public ContainerRange Condition { get; }
-        public List<ContainerRange> Branches { get; }
+        public ICompiledStructure Condition { get; }
+        public List<CompiledContainer> Branches { get; }
         public int EndIndex { get; }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            dc.Out("{");
+            Condition.Decompile(dc);
+            dc.Out(":");
+            Branches[0].Decompile(dc);
+            if (Branches.Count == 2)
+            {
+                dc.Out("|");
+                Branches[1].Decompile(dc);
+            }
+            else if (Branches.Count > 2)
+            {
+                throw new NotSupportedException("Don't know how to decompile >2 branches");
+            }
+            dc.Out("}");
+        }
     }
 
-    class ContainerRange
+    public class ContainerRange
     {
         public ContainerRange(Container container, int startIndex, int endIndex)
         {
@@ -614,12 +778,6 @@ namespace inkdc
         public int Count => EndIndex - StartIndex;
         public List<Ink.Runtime.Object> Elements =>
             Container.content.GetRange(StartIndex, Count);
-        public Ink.Runtime.Object At(int index) => Container.content[index + StartIndex];
-
-        public ContainerRange SubRange(int start, int end)
-        {
-            return new(Container, StartIndex + start, StartIndex + end);
-        }
     }
 
     class ContainerCursor

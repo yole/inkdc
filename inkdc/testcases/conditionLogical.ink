@@ -1,5 +1,5 @@
 ﻿== start ==
-* { (not(visit_paris || visit_rome)) && (visit_london || visit_new_york) } [ Wait. Go where? I'm confused. ] -> visit_someplace
+* { (not (visit_paris || visit_rome)) && (visit_london || visit_new_york) } [ Wait. Go where? I'm confused. ] -> visit_someplace
 
 == visit_paris ==
 You're in Paris
