@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using Ink.Runtime;
@@ -94,8 +95,20 @@ namespace inkdc
                     result.Add(weave);
                     continue;
                 }
+                var multiConditional = AnalyzeMultilineConditional(container, ref index);
+                if (multiConditional != null)
+                {
+                    result.Add(multiConditional);
+                    continue;
+                }
                 if (container.content[index].IsControlCommand(ControlCommand.CommandType.EvalStart))
                 {
+                    var switchStatement = AnalyzeSwitch(container, ref index);
+                    if (switchStatement != null)
+                    {
+                        result.Add(switchStatement);
+                        continue;
+                    }
                     var choice = AnalyzeChoice(container, ref index);
                     if (choice != null)
                     {
@@ -369,11 +382,97 @@ namespace inkdc
             {
                 cursor.TakeNext();
                 index = cursor.Index;
-                return new ConditionalData(AnalyzeExpression(container, conditionStart, conditionEnd),
+                return new ConditionalData(new() { AnalyzeExpression(container, conditionStart, conditionEnd) },
                     branches);
             }
 
             return null;
+        }
+
+        ConditionalData AnalyzeMultilineConditional(Container container, ref int index, ICompiledStructure discriminator = null)
+        {
+            var branches = new List<CompiledContainer>();
+            var conditions = new List<ICompiledStructure>();
+            for (int curIndex = index;
+                curIndex < container.content.Count && container.content[curIndex] is Container child;
+                curIndex++)
+            {
+                var childCursor = new ContainerCursor(child);
+                if (discriminator != null && !(childCursor.Current is Divert))
+                {
+                    if (childCursor.Current.IsControlCommand(ControlCommand.CommandType.Duplicate))
+                    {
+                        childCursor.TakeNext();
+                    }
+                    else
+                    {
+                        return null;
+                    }
+                }
+                if (childCursor.Current.IsControlCommand(ControlCommand.CommandType.EvalStart))
+                {
+                    childCursor.TakeNext();
+                    int conditionStart = childCursor.Index;
+                    if (!childCursor.SkipToControlCommand(ControlCommand.CommandType.EvalEnd))
+                    {
+                        return null;
+                    }
+                    if (childCursor.Current is Divert divert && divert.isConditional)
+                    {
+                        int conditionEnd = childCursor.Index - 1;
+                        if (discriminator != null)
+                        {
+                            // skip == operation which compares against value pushed by Duplicate
+                            conditionEnd--;
+                        }
+                        conditions.Add(AnalyzeExpression(child, conditionStart, conditionEnd));
+                        var branchContainer = divert.targetPointer.container;
+                        // last element is divert to rejoin target; first element is 'pop' if discriminator is specified
+                        branches.Add(AnalyzeContainer(branchContainer, discriminator != null ? 1 : 0, branchContainer.content.Count - 1));
+                        index = curIndex + 1;
+                    }
+                    else
+                    {
+                        return null;
+                    }
+                }
+                else if (childCursor.Current is Divert divert && !divert.isConditional && branches.Count > 0)
+                {
+                    var branchContainer = divert.targetPointer.container;
+                    // last element is divert to rejoin target; first element is 'pop' if discriminator is specified
+                    branches.Add(AnalyzeContainer(branchContainer, discriminator != null ? 1 : 0, branchContainer.content.Count - 1));
+                    index = curIndex + 1;
+                    break;
+                }
+                else
+                {
+                    return null;
+                }
+            }
+
+            if (branches.Count > 0)
+            {
+                if (index < container.content.Count &&
+                    container.content[index].IsControlCommand(ControlCommand.CommandType.NoOp))
+                {
+                    index++;
+                }
+                return new ConditionalData(conditions, branches, discriminator);
+            }
+            return null;
+        }
+
+        ConditionalData AnalyzeSwitch(Container container, ref int index)
+        {
+            var endIndex = index;
+            ICompiledStructure discriminator = AnalyzeEvalBlock(container, ref endIndex);
+            if (discriminator == null) return null;
+            var conditional = AnalyzeMultilineConditional(container, ref endIndex, discriminator);
+            if (conditional != null)
+            {
+                index = endIndex;
+            }
+            return conditional;
         }
 
         List<ICompiledStructure> AnalyzeEmbeddedExpression(Container container, ref int index)
@@ -426,7 +525,33 @@ namespace inkdc
             return result;
         }
 
-        public ICompiledStructure AnalyzeExpression(Container container, int startIndex, int endIndex)
+        public ICompiledStructure AnalyzeEvalBlock(Container container, ref int index)
+        {
+            var cursor = new ContainerCursor(container);
+            if (!cursor.Current.IsControlCommand(ControlCommand.CommandType.EvalStart))
+            {
+                return null;
+            }
+            cursor.TakeNext();
+            int startIndex = cursor.Index;
+            if (!cursor.SkipToControlCommand(ControlCommand.CommandType.EvalEnd))
+            {
+                return null;
+            }
+            if (cursor.Index == startIndex + 1)
+            {
+                // EvalStart immediately followed by EvalEnd
+                return null;
+            }
+            ICompiledStructure expression = AnalyzeExpression(container, startIndex, cursor.Index - 1, true);
+            if (expression != null)
+            {
+                index = cursor.Index;
+            }
+            return expression;
+        }
+
+        public ICompiledStructure AnalyzeExpression(Container container, int startIndex, int endIndex, bool ignoreUnknown = false)
         {
             List<Ink.Runtime.Object> expression = container.content.GetRange(startIndex, endIndex - startIndex);
             Stack<ICompiledStructure> stack = new();
@@ -457,6 +582,7 @@ namespace inkdc
                     }
                     else
                     {
+                        if (ignoreUnknown) return null;
                         throw new NotSupportedException("Don't know how to decompile " + obj);
                     }
                 }
@@ -489,11 +615,13 @@ namespace inkdc
                     }
                     else
                     {
+                        if (ignoreUnknown) return null;
                         throw new NotSupportedException("Don't know how to decompile " + obj);
                     }
                 }
                 else
                 {
+                    if (ignoreUnknown) return null;
                     throw new NotSupportedException("Don't know how to decompile " + obj);
                 }
 
@@ -582,7 +710,7 @@ namespace inkdc
         }
     }
 
-    public class CompiledContainer : ICompiledStructure
+    public class CompiledContainer : ICompiledStructure, IEnumerable<ICompiledStructure>
     {
         private readonly List<ICompiledStructure> content;
 
@@ -606,6 +734,16 @@ namespace inkdc
         public void RemoveAt(int index)
         {
             content.RemoveAt(index);
+        }
+
+        public IEnumerator<ICompiledStructure> GetEnumerator()
+        {
+            return ((IEnumerable<ICompiledStructure>)content).GetEnumerator();
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return ((IEnumerable)content).GetEnumerator();
         }
     }
 
@@ -941,31 +1079,81 @@ namespace inkdc
 
     class ConditionalData : ICompiledStructure
     {
-        public ConditionalData(ICompiledStructure condition, List<CompiledContainer> branches)
+        public ConditionalData(List<ICompiledStructure> conditions, List<CompiledContainer> branches,
+            ICompiledStructure discriminator = null)
         {
-            Condition = condition;
+            Conditions = conditions;
             Branches = branches;
+            Discriminator = discriminator;
         }
 
-        public ICompiledStructure Condition { get; }
+        public List<ICompiledStructure> Conditions { get; }
         public List<CompiledContainer> Branches { get; }
+        public ICompiledStructure Discriminator { get; }
 
         public void Decompile(StoryDecompiler dc)
         {
             dc.Out("{");
-            Condition.Decompile(dc);
-            dc.Out(":");
-            Branches[0].Decompile(dc);
-            if (Branches.Count == 2)
+            if (Discriminator != null)
             {
-                dc.Out("|");
-                Branches[1].Decompile(dc);
+                Discriminator.Decompile(dc);
+                dc.Out(":\n");
             }
-            else if (Branches.Count > 2)
+            for (int i = 0; i < Conditions.Count; i++)
             {
-                throw new NotSupportedException("Don't know how to decompile >2 branches");
+                if (Conditions.Count > 1)
+                {
+                    dc.Out("- ");
+                }
+                Conditions[i].Decompile(dc);
+                dc.Out(":");
+                Branches[i].Decompile(dc);
+            }
+            if (Branches.Count > Conditions.Count) 
+            {
+                if (IsMultiline())
+                {
+                    dc.Out("- else:");
+                }
+                else
+                {
+                    dc.Out("|");
+                }
+                Branches[Branches.Count - 1].Decompile(dc);
             }
             dc.Out("}");
+        }
+
+        private bool IsMultiline()
+        {
+            if (Conditions.Count > 1) return true;
+            foreach (ICompiledStructure element in Branches)
+            {
+                if (IsMultilineElement(element))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private bool IsMultilineElement(ICompiledStructure element)
+        {
+            if (element is VariableAssignmentExpression || element is StatementExpression)
+            {
+                return true;
+            }
+            if (element is CompiledContainer container)
+            {
+                foreach (ICompiledStructure child in container)
+                {
+                    if (IsMultilineElement(child))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
     }
 

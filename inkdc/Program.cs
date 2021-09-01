@@ -41,17 +41,23 @@ namespace inkdc
                 {
                     var ink = File.ReadAllText(file);
                     var json = File.ReadAllText(file + ".json");
-                    var decompiledInk = DecompileStory(json);
-                    if (ink != decompiledInk)
+                    try
                     {
-                        Console.WriteLine("Decompilation result differs from source for " + file + ":");
-                        Console.WriteLine(decompiledInk);
+                        var decompiledInk = DecompileStory(json);
+                        if (ink != decompiledInk)
+                        {
+                            Console.WriteLine("Decompilation result differs from source for " + file + ":");
+                            Console.WriteLine(decompiledInk);
+                        }
+                        else
+                        {
+                            Console.WriteLine("OK " + file);
+                        }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        Console.WriteLine("OK " + file);
+                        Console.WriteLine("ERR " + file + ":\n" + ex.StackTrace);
                     }
-
                 }
             }
                 
