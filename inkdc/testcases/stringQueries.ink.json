@@ -1,0 +1,1 @@
+﻿{"inkVersion":20,"root":[["ev","str","^Yes, please.","/str","str","^Yes, please.","/str","==","out","/ev","\n","ev","str","^No, thank you.","/str","str","^Yes, please.","/str","!=","out","/ev","\n","ev","str","^Yes, please","/str","str","^ease","/str","?","out","/ev","\n",["done",{"#n":"g-0"}],null],"done",null],"listDefs":{}}

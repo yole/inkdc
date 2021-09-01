@@ -389,8 +389,21 @@ namespace inkdc
                     break;
                 }
                 var varAssign = container.content[cursor.Index - 1] as VariableAssignment;
-                var initializer = AnalyzeExpression(container, initializerStartIndex, cursor.Index - 1);
-                result.Add(new VariableAssignmentExpression(varAssign.variableName, initializer, container.name == "global decl"));
+                var endIndex = cursor.Index - 1;
+                if (container.content[endIndex - 1].IsControlCommand(ControlCommand.CommandType.EvalEnd))
+                {
+                    // eval end precedes varassign
+                    var initializer = AnalyzeExpression(container, initializerStartIndex, cursor.Index - 2);
+                    index = cursor.Index;
+                    return new() { new VariableAssignmentExpression(varAssign.variableName, initializer,
+                        varAssign.isGlobal, varAssign.isNewDeclaration) };
+                }
+                else
+                {
+                    var initializer = AnalyzeExpression(container, initializerStartIndex, cursor.Index - 1);
+                    result.Add(new VariableAssignmentExpression(varAssign.variableName, initializer,
+                        varAssign.isGlobal, varAssign.isNewDeclaration));
+                }
             }
 
             int expressionStart = cursor.Index;
@@ -434,6 +447,14 @@ namespace inkdc
                     {
                         BuildBinaryExpression(stack, call.name);
                     }
+                    else if (call.name == "POW")
+                    {
+                        BuildFunctionCall(stack, "POW", 2);
+                    }
+                    else if (call.name == "INT" || call.name == "FLOOR" || call.name == "FLOAT")
+                    {
+                        BuildFunctionCall(stack, call.name, 1);
+                    }
                     else
                     {
                         throw new NotSupportedException("Don't know how to decompile " + obj);
@@ -455,8 +476,11 @@ namespace inkdc
                     }
                     else if (controlCommand.commandType == ControlCommand.CommandType.TurnsSince)
                     {
-                        var operand = stack.Pop();
-                        stack.Push(new FunctionCall("TURNS_SINCE", new() { operand }));
+                        BuildFunctionCall(stack, "TURNS_SINCE", 1);
+                    }
+                    else if (controlCommand.commandType == ControlCommand.CommandType.Random)
+                    {
+                        BuildFunctionCall(stack, "RANDOM", 2);
                     }
                     else if (controlCommand.commandType == ControlCommand.CommandType.BeginString ||
                         controlCommand.commandType == ControlCommand.CommandType.EndString)
@@ -484,9 +508,19 @@ namespace inkdc
             stack.Push(new BinaryExpression(op, operand2, operand1));
         }
 
+        void BuildFunctionCall(Stack<ICompiledStructure> stack, string functionName, int argCount)
+        {
+            var args = new List<ICompiledStructure>();
+            for (int i = 0; i < argCount; i++)
+            {
+                args.Insert(0, stack.Pop());
+            }
+            stack.Push(new FunctionCall(functionName, args));
+        }
+
         static HashSet<string> _binaryOperators = new()
         {
-            "+", "-", "/", "*", "%", "==", "<", ">", ">=", "<=", "!=", "&&", "||"
+            "+", "-", "/", "*", "%", "==", "<", ">", ">=", "<=", "!=", "&&", "||", "?", "!?"
         };
     }
 
@@ -752,17 +786,26 @@ namespace inkdc
         private readonly string variableName;
         private readonly ICompiledStructure initializer;
         private readonly bool global;
+        private readonly bool isDeclaration;
 
-        public VariableAssignmentExpression(string variableName, ICompiledStructure initializer, bool global)
+        public VariableAssignmentExpression(string variableName, ICompiledStructure initializer,
+            bool global, bool isDeclaration)
         {
             this.variableName = variableName;
             this.initializer = initializer;
             this.global = global;
+            this.isDeclaration = isDeclaration;
         }
 
         public void Decompile(StoryDecompiler dc)
         {
-            dc.Out(global ? "VAR " : "~ ");
+            if (isDeclaration)
+            {
+                dc.Out(global ? "VAR " : "~ temp ");
+            }
+            else {
+                dc.Out("~ ");
+            }
             dc.Out(variableName + " = ");
             initializer.Decompile(dc);
             dc.Out("\n");

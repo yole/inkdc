@@ -1,0 +1,34 @@
+﻿{
+  "inkVersion": 20,
+  "root": [
+    [
+      "ev",
+      1,
+      6,
+      "rnd",
+      "/ev",
+      {
+        "temp=": "dice_roll"
+      },
+      "\n",
+      [
+        "done",
+        {
+          "#n": "g-0"
+        }
+      ],
+      null
+    ],
+    "done",
+    {
+      "global decl": [
+        "ev",
+        "/ev",
+        "end",
+        null
+      ]
+    }
+  ],
+  "listDefs": {
+  }
+}

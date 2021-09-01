@@ -1,0 +1,1 @@
+﻿{"inkVersion":20,"root":[["ev",3.2,"INT","out","/ev","^ is 3.","\n","ev",4.8,"FLOOR","out","/ev","^ is 4.","\n","ev",-4.8,"INT","out","/ev","^ is -4.","\n","ev",-4.8,"FLOOR","out","/ev","^ is -5.","\n","ev",4,"FLOAT","out","/ev","^ is, um, still 4.","\n",["done",{"#n":"g-0"}],null],"done",null],"listDefs":{}}
