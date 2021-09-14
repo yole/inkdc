@@ -1,0 +1,181 @@
+﻿{
+  "inkVersion": 20,
+  "root": [
+    [
+      "ev",
+      "str",
+      "^Accuse Hasting",
+      "/str",
+      "/ev",
+      {
+        "*": "0.c-0",
+        "flg": 20
+      },
+      "ev",
+      "str",
+      "^Accuse Mrs Black",
+      "/str",
+      "/ev",
+      {
+        "*": "0.c-1",
+        "flg": 20
+      },
+      "ev",
+      "str",
+      "^Accuse myself",
+      "/str",
+      "/ev",
+      {
+        "*": "0.c-2",
+        "flg": 20
+      },
+      {
+        "c-0": [
+          "\n",
+          "ev",
+          "str",
+          "^Hastings",
+          "/str",
+          "str",
+          "^A",
+          "/str",
+          "/ev",
+          {
+            "->": "accuse"
+          },
+          {
+            "->": "0.g-0"
+          },
+          {
+            "#f": 5
+          }
+        ],
+        "c-1": [
+          "\n",
+          "ev",
+          "str",
+          "^Claudia",
+          "/str",
+          "str",
+          "^B",
+          "/str",
+          "/ev",
+          {
+            "->": "accuse"
+          },
+          {
+            "->": "0.g-0"
+          },
+          {
+            "#f": 5
+          }
+        ],
+        "c-2": [
+          "^ ",
+          "\n",
+          "ev",
+          "str",
+          "^myself",
+          "/str",
+          "str",
+          "^C",
+          "/str",
+          "/ev",
+          {
+            "->": "accuse"
+          },
+          {
+            "->": "0.g-0"
+          },
+          {
+            "#f": 5
+          }
+        ],
+        "g-0": [
+          "done",
+          null
+        ]
+      }
+    ],
+    "done",
+    {
+      "accuse": [
+        {
+          "temp=": "letter"
+        },
+        {
+          "temp=": "who"
+        },
+        "^\"",
+        "ev",
+        {
+          "VAR?": "letter"
+        },
+        "out",
+        "/ev",
+        "^ accuse ",
+        "ev",
+        {
+          "VAR?": "who"
+        },
+        "out",
+        "/ev",
+        "^!\" Poirot declared.",
+        "\n",
+        "^\"Really?\" Japp replied. \"",
+        "ev",
+        {
+          "VAR?": "who"
+        },
+        "str",
+        "^myself",
+        "/str",
+        "==",
+        "/ev",
+        [
+          {
+            "->": ".^.b",
+            "c": true
+          },
+          {
+            "b": [
+              "^You did it?",
+              {
+                "->": "accuse.24"
+              },
+              null
+            ]
+          }
+        ],
+        [
+          {
+            "->": ".^.b"
+          },
+          {
+            "b": [
+              "ev",
+              {
+                "VAR?": "who"
+              },
+              "out",
+              "/ev",
+              "^?",
+              {
+                "->": "accuse.24"
+              },
+              null
+            ]
+          }
+        ],
+        "nop",
+        "^\"",
+        "\n",
+        "^\"And why not?\" Poirot shot back.",
+        "\n",
+        null
+      ]
+    }
+  ],
+  "listDefs": {
+  }
+}

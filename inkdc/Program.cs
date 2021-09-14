@@ -56,7 +56,7 @@ namespace inkdc
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine("ERR " + file + ":\n" + ex.StackTrace);
+                        Console.WriteLine("ERR " + file + ": " + ex.Message + "\n" + ex.StackTrace);
                     }
                 }
             }

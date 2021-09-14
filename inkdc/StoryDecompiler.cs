@@ -40,8 +40,7 @@ namespace inkdc
                     var namedContent = mainContentContainer.namedOnlyContent[name];
                     if (namedContent is Container namedContainer)
                     {
-                        Out("== " + name + " ==\n");
-                        DecompileKnot(namedContainer);
+                        AnalyzeKnot(name, namedContainer).Decompile(this);
                     }
                 }
             }
@@ -62,22 +61,45 @@ namespace inkdc
             }
         }
 
-        void DecompileKnot(Container container)
+        CompiledKnot AnalyzeKnot(string name, Container container)
         {
-            AnalyzeContainer(container).Decompile(this);
+            List<string> parameters = new();
+            int startIndex = 0;
+            while (startIndex < container.content.Count &&
+                container.content[startIndex] is VariableAssignment varAssign)
+            {
+                parameters.Insert(0, varAssign.variableName);
+                startIndex++;
+            }
+            CompiledContainer compiledContainer = AnalyzeContainer(container, startIndex);
+            if (IsDivertToFirstStitch(compiledContainer))
+            {
+                compiledContainer.RemoveAt(0);
+            }
+            CompiledKnot knot = new CompiledKnot(name, compiledContainer, parameters);
 
             if (container.namedOnlyContent != null)
             {
-                foreach (string name in container.namedOnlyContent.Keys)
+                foreach (string stitchName in container.namedOnlyContent.Keys)
                 {
-                    var namedContent = container.namedOnlyContent[name];
+                    var namedContent = container.namedOnlyContent[stitchName];
                     if (namedContent is Container namedContainer)
                     {
-                        Out("= " + name + "\n");
-                        AnalyzeContainer(namedContainer).Decompile(this);
+                        knot.Stitches.Add(new CompiledStitch(stitchName, AnalyzeContainer(namedContainer)));
                     }
                 }
             }
+            return knot;
+        }
+
+        bool IsDivertToFirstStitch(CompiledContainer container)
+        {
+            if (container.Count != 1) return false;
+            if (container.At(0) is DivertStatement divertStatement)
+            {
+                return divertStatement.TargetPath.lastComponent.index == 0;
+            }
+            return false;
         }
 
         public CompiledContainer AnalyzeContainer(Container container, int index = 0, int endIndex = -1)
@@ -127,6 +149,12 @@ namespace inkdc
                         result.Add(conditional);
                         continue;
                     }
+                    var divert = AnalyzeDivertWithParameters(container, ref index);
+                    if (divert != null)
+                    {
+                        result.Add(divert);
+                        continue;
+                    }
                     var embedded = AnalyzeEmbeddedExpression(container, ref index);
                     if (embedded != null)
                     {
@@ -137,6 +165,10 @@ namespace inkdc
                 if (container.content[index] is Container child)
                 {
                     result.Add(AnalyzeContainer(child));
+                }
+                else if (container.content[index] is Divert divert)
+                {
+                    result.Add(new DivertStatement(divert.targetPath));
                 }
                 else
                 {
@@ -213,7 +245,7 @@ namespace inkdc
                 {
                     var childIndex = 0;
                     ChoiceData choice = AnalyzeChoice(childContainer, ref childIndex);
-                    if (choice == null) break;
+                    if (choice == null || childIndex < childContainer.content.Count - 1) break;
                     choices.Add(choice);
                     localIndex++;
                 }
@@ -246,8 +278,7 @@ namespace inkdc
                 {
                     foreach (var choice in choices)
                     {
-                        var lastObj = choice.InnerContent.Last();
-                        if (lastObj is CompiledObject obj && obj.Obj is Divert)
+                        if (choice.InnerContent.Last() is DivertStatement)
                         {
                             choice.InnerContent.RemoveAt(choice.InnerContent.Count - 1);
                         }
@@ -273,9 +304,9 @@ namespace inkdc
         Path ExtractGatherPath(ChoiceData choice)
         {
             if (choice.InnerContent.Count == 0) return null;
-            if (choice.InnerContent.Last() is CompiledObject obj && obj.Obj is Divert divert)
+            if (choice.InnerContent.Last() is DivertStatement divert)
             {
-                return divert.targetPath;
+                return divert.TargetPath;
             }
             WeaveData weaveData = LastWeaveForChoice(choice);
             if (weaveData != null)
@@ -465,14 +496,27 @@ namespace inkdc
         ConditionalData AnalyzeSwitch(Container container, ref int index)
         {
             var endIndex = index;
-            ICompiledStructure discriminator = AnalyzeEvalBlock(container, ref endIndex);
-            if (discriminator == null) return null;
-            var conditional = AnalyzeMultilineConditional(container, ref endIndex, discriminator);
+            Stack<ICompiledStructure> stack = AnalyzeEvalBlock(container, ref endIndex);
+            if (stack == null || stack.Count != 1) return null;
+            var conditional = AnalyzeMultilineConditional(container, ref endIndex, stack.Pop());
             if (conditional != null)
             {
                 index = endIndex;
             }
             return conditional;
+        }
+
+        DivertStatement AnalyzeDivertWithParameters(Container container, ref int index)
+        {
+            var endIndex = index;
+            Stack<ICompiledStructure> stack = AnalyzeEvalBlock(container, ref endIndex);
+            if (stack == null || stack.Count == 0) return null;
+            if (container.content[endIndex] is Divert divert)
+            {
+                index = endIndex + 1;
+                return new DivertStatement(divert.targetPath, stack);
+            }
+            return null;
         }
 
         List<ICompiledStructure> AnalyzeEmbeddedExpression(Container container, ref int index)
@@ -525,9 +569,9 @@ namespace inkdc
             return result;
         }
 
-        public ICompiledStructure AnalyzeEvalBlock(Container container, ref int index)
+        public Stack<ICompiledStructure> AnalyzeEvalBlock(Container container, ref int index)
         {
-            var cursor = new ContainerCursor(container);
+            var cursor = new ContainerCursor(container, index);
             if (!cursor.Current.IsControlCommand(ControlCommand.CommandType.EvalStart))
             {
                 return null;
@@ -543,7 +587,7 @@ namespace inkdc
                 // EvalStart immediately followed by EvalEnd
                 return null;
             }
-            ICompiledStructure expression = AnalyzeExpression(container, startIndex, cursor.Index - 1, true);
+            Stack<ICompiledStructure> expression = AnalyzeExpressionStack(container, startIndex, cursor.Index - 1, true);
             if (expression != null)
             {
                 index = cursor.Index;
@@ -552,6 +596,13 @@ namespace inkdc
         }
 
         public ICompiledStructure AnalyzeExpression(Container container, int startIndex, int endIndex, bool ignoreUnknown = false)
+        {
+            Stack<ICompiledStructure> stack = AnalyzeExpressionStack(container, startIndex, endIndex, ignoreUnknown);
+            if (stack == null) return null;
+            return stack.Pop();
+        }
+
+        public Stack<ICompiledStructure> AnalyzeExpressionStack(Container container, int startIndex, int endIndex, bool ignoreUnknown = false)
         {
             List<Ink.Runtime.Object> expression = container.content.GetRange(startIndex, endIndex - startIndex);
             Stack<ICompiledStructure> stack = new();
@@ -626,7 +677,7 @@ namespace inkdc
                 }
 
             }
-            return stack.Pop();
+            return stack;
         }
 
         void BuildBinaryExpression(Stack<ICompiledStructure> stack, string op)
@@ -672,13 +723,6 @@ namespace inkdc
             {
                 dc.Out(stringValue.value);
             }
-            else if (Obj is Divert divert)
-            {
-                if (!IsGeneratedDivert(dc, divert))
-                {
-                    dc.Out("-> " + divert.targetPathString + "\n");
-                }
-            }
             else if (Obj is ControlCommand controlCommand)
             {
                 if (controlCommand.commandType != ControlCommand.CommandType.Done &&
@@ -691,22 +735,6 @@ namespace inkdc
             {
                 throw new NotSupportedException("Don't know how to decompile " + Obj);
             }
-        }
-
-        private bool IsGeneratedDivert(StoryDecompiler dc, Divert divert)
-        {
-            SearchResult searchResult = dc.Story.ContentAtPath(divert.targetPath);
-            if (searchResult.container != null && searchResult.container.IsDone())
-            {
-                return true;
-            }
-            if (divert.parent is Container container && container.content.Count == 1 &&
-                divert.targetPath.lastComponent.index == 0)
-            {
-                // divert to first stitch in a knot
-                return true;
-            }
-            return false;
         }
     }
 
@@ -744,6 +772,66 @@ namespace inkdc
         IEnumerator IEnumerable.GetEnumerator()
         {
             return ((IEnumerable)content).GetEnumerator();
+        }
+    }
+
+    class CompiledKnot : ICompiledStructure
+    {
+        public CompiledKnot(string name, CompiledContainer content, List<string> parameters)
+        {
+            Name = name;
+            Content = content;
+            Parameters = parameters;
+        }
+
+        public string Name { get; }
+        public CompiledContainer Content { get; }
+        public List<string> Parameters { get; }
+
+        public readonly List<CompiledStitch> Stitches = new();
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            dc.Out("== " + Name);
+            if (Parameters.Count > 0)
+            {
+                dc.Out("(");
+                for (int i = 0; i < Parameters.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        dc.Out(", ");
+                    }
+                    dc.Out(Parameters[i]);
+                }
+                dc.Out(")");
+            }
+            dc.Out(" ==\n");
+
+            Content.Decompile(dc);
+
+            foreach (var stitch in Stitches)
+            {
+                stitch.Decompile(dc);
+            }
+        }
+    }
+
+    class CompiledStitch : ICompiledStructure
+    {
+        private readonly string name;
+        private readonly CompiledContainer container;
+
+        public CompiledStitch(string name, CompiledContainer container)
+        {
+            this.name = name;
+            this.container = container;
+        }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            dc.Out("= " + name + "\n");
+            container.Decompile(dc);
         }
     }
 
@@ -882,6 +970,51 @@ namespace inkdc
                 Operands[i].Decompile(dc);
             }
             dc.Out(")");
+        }
+    }
+
+    class DivertStatement : ICompiledStructure
+    {
+        public DivertStatement(Path targetPath, Stack<ICompiledStructure> parameters = null)
+        {
+            TargetPath = targetPath;
+            Parameters = parameters != null ? parameters.ToArray() : new ICompiledStructure[0];
+        }
+
+        public Path TargetPath { get; }
+        public ICompiledStructure[] Parameters { get; }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            if (!IsGeneratedDivert(dc))
+            {
+                dc.Out("-> " + TargetPath.componentsString);
+                if (Parameters.Length != 0)
+                {
+                    dc.Out("(");
+                    for (int i = 0; i < Parameters.Length; i++)
+                    {
+                        if (i > 0)
+                        {
+                            dc.Out(", ");
+                        }
+                        Parameters[Parameters.Length - i - 1].Decompile(dc);
+                    }
+                    dc.Out(")");
+                }
+                dc.Out("\n");
+            }
+        }
+
+
+        private bool IsGeneratedDivert(StoryDecompiler dc)
+        {
+            SearchResult searchResult = dc.Story.ContentAtPath(TargetPath);
+            if (searchResult.container != null && searchResult.container.IsDone())
+            {
+                return true;
+            }
+            return false;
         }
     }
 
