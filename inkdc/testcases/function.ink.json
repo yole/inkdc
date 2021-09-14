@@ -1,0 +1,74 @@
+﻿{
+  "inkVersion": 20,
+  "root": [
+    [
+      "ev",
+      2,
+      8,
+      0.3,
+      {
+        "f()": "lerp"
+      },
+      "/ev",
+      {
+        "temp=": "x"
+      },
+      "\n",
+      [
+        "done",
+        {
+          "#n": "g-0"
+        }
+      ],
+      null
+    ],
+    "done",
+    {
+      "say_yes_to_everything": [
+        "ev",
+        true,
+        "/ev",
+        "~ret",
+        null
+      ],
+      "lerp": [
+        {
+          "temp=": "k"
+        },
+        {
+          "temp=": "b"
+        },
+        {
+          "temp=": "a"
+        },
+        "ev",
+        {
+          "VAR?": "b"
+        },
+        {
+          "VAR?": "a"
+        },
+        "-",
+        {
+          "VAR?": "k"
+        },
+        "*",
+        {
+          "VAR?": "a"
+        },
+        "+",
+        "/ev",
+        "~ret",
+        null
+      ],
+      "global decl": [
+        "ev",
+        "/ev",
+        "end",
+        null
+      ]
+    }
+  ],
+  "listDefs": {
+  }
+}

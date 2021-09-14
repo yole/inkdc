@@ -71,12 +71,15 @@ namespace inkdc
                 parameters.Insert(0, varAssign.variableName);
                 startIndex++;
             }
+
+            bool isFunction = container.content.Exists(c => c.IsControlCommand(ControlCommand.CommandType.PopFunction));
+
             CompiledContainer compiledContainer = AnalyzeContainer(container, startIndex);
             if (IsDivertToFirstStitch(compiledContainer))
             {
                 compiledContainer.RemoveAt(0);
             }
-            CompiledKnot knot = new CompiledKnot(name, compiledContainer, parameters);
+            CompiledKnot knot = new CompiledKnot(name, compiledContainer, parameters, isFunction);
 
             if (container.namedOnlyContent != null)
             {
@@ -149,7 +152,7 @@ namespace inkdc
                         result.Add(conditional);
                         continue;
                     }
-                    var divert = AnalyzeDivertWithParameters(container, ref index);
+                    var divert = AnalyzeEvalBlockAndFollowingOperation(container, ref index);
                     if (divert != null)
                     {
                         result.Add(divert);
@@ -506,7 +509,7 @@ namespace inkdc
             return conditional;
         }
 
-        DivertStatement AnalyzeDivertWithParameters(Container container, ref int index)
+        ICompiledStructure AnalyzeEvalBlockAndFollowingOperation(Container container, ref int index)
         {
             var endIndex = index;
             Stack<ICompiledStructure> stack = AnalyzeEvalBlock(container, ref endIndex);
@@ -515,6 +518,11 @@ namespace inkdc
             {
                 index = endIndex + 1;
                 return new DivertStatement(divert.targetPath, stack);
+            }
+            if (container.content[endIndex].IsControlCommand(ControlCommand.CommandType.PopFunction))
+            {
+                index = endIndex + 1;
+                return new StatementExpression(new ReturnStatement(stack.Pop()));
             }
             return null;
         }
@@ -670,6 +678,15 @@ namespace inkdc
                         throw new NotSupportedException("Don't know how to decompile " + obj);
                     }
                 }
+                else if (obj is Divert divert && divert.pushesToStack)
+                {
+                    var callTarget = divert.targetPointer.container;
+                    if (callTarget == null)
+                    {
+                        throw new NotSupportedException("Don't know how to decompile divert to unresolved container");
+                    }
+                    BuildFunctionCall(stack, callTarget.name, DetectArgCount(callTarget));
+                }
                 else
                 {
                     if (ignoreUnknown) return null;
@@ -678,6 +695,18 @@ namespace inkdc
 
             }
             return stack;
+        }
+
+        int DetectArgCount(Container container)
+        {
+            for (int i = 0; i < container.content.Count; i++)
+            {
+                if (!(container.content [i] is VariableAssignment))
+                {
+                    return i;
+                }
+            }
+            return container.content.Count;
         }
 
         void BuildBinaryExpression(Stack<ICompiledStructure> stack, string op)
@@ -777,22 +806,31 @@ namespace inkdc
 
     class CompiledKnot : ICompiledStructure
     {
-        public CompiledKnot(string name, CompiledContainer content, List<string> parameters)
+        public CompiledKnot(string name, CompiledContainer content, List<string> parameters,
+            bool isFunction)
         {
             Name = name;
             Content = content;
             Parameters = parameters;
+            IsFunction = isFunction;
         }
 
         public string Name { get; }
         public CompiledContainer Content { get; }
         public List<string> Parameters { get; }
+        public bool IsFunction { get; }
 
         public readonly List<CompiledStitch> Stitches = new();
 
         public void Decompile(StoryDecompiler dc)
         {
-            dc.Out("== " + Name);
+            dc.EnsureNewLine();
+            dc.Out("== ");
+            if (IsFunction)
+            {
+                dc.Out("function ");
+            }
+            dc.Out(Name);
             if (Parameters.Count > 0)
             {
                 dc.Out("(");
@@ -1049,6 +1087,22 @@ namespace inkdc
             dc.EnsureNewLine();
             dc.Out("~ ");
             expression.Decompile(dc);
+        }
+    }
+
+    class ReturnStatement : ICompiledStructure
+    {
+        private readonly ICompiledStructure returnValue;
+
+        public ReturnStatement(ICompiledStructure returnValue)
+        {
+            this.returnValue = returnValue;
+        }
+
+        public void Decompile(StoryDecompiler dc)
+        {
+            dc.Out("return ");
+            returnValue.Decompile(dc);
         }
     }
 
