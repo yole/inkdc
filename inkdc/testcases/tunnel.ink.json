@@ -1,0 +1,36 @@
+﻿{
+  "inkVersion": 20,
+  "root": [
+    [
+      [
+        "done",
+        {
+          "#n": "g-0"
+        }
+      ],
+      null
+    ],
+    "done",
+    {
+      "start": [
+        "^We started our journey.",
+        "\n",
+        {
+          "->t->": "crossing_the_date_line"
+        },
+        null
+      ],
+      "crossing_the_date_line": [
+        "^We crossed the date line.",
+        "\n",
+        "ev",
+        "void",
+        "/ev",
+        "->->",
+        null
+      ]
+    }
+  ],
+  "listDefs": {
+  }
+}

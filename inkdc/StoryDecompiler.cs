@@ -172,7 +172,8 @@ namespace inkdc
                 }
                 else if (container.content[index] is Divert divert)
                 {
-                    result.Add(new DivertStatement(divert.targetPath));
+                    result.Add(new DivertStatement(divert.targetPath,
+                        divert.pushesToStack && divert.stackPushType == PushPopType.Tunnel));
                 }
                 else
                 {
@@ -514,11 +515,19 @@ namespace inkdc
         {
             var endIndex = index;
             Stack<ICompiledStructure> stack = AnalyzeEvalBlock(container, ref endIndex);
-            if (stack == null || stack.Count == 0) return null;
+            if (stack == null) return null;
+            if (container.content[endIndex].IsControlCommand(ControlCommand.CommandType.PopTunnel))
+            {
+                index = endIndex + 1;
+                return new TunnelOnwardsStatement();
+            }
+            if (stack.Count == 0) return null;
             if (container.content[endIndex] is Divert divert)
             {
                 index = endIndex + 1;
-                return new DivertStatement(divert.targetPath, stack);
+                return new DivertStatement(divert.targetPath,
+                    divert.pushesToStack && divert.stackPushType == PushPopType.Tunnel,
+                    stack);
             }
             if (container.content[endIndex].IsControlCommand(ControlCommand.CommandType.PopFunction))
             {
@@ -682,6 +691,10 @@ namespace inkdc
                         if (ignoreUnknown) return null;
                         throw new NotSupportedException("Don't know how to decompile " + obj);
                     }
+                }
+                else if (obj is Ink.Runtime.Void)
+                {
+                    // TODO ignore for now
                 }
                 else if (obj is Divert divert && divert.pushesToStack)
                 {
@@ -1058,13 +1071,15 @@ namespace inkdc
 
     class DivertStatement : ICompiledStructure
     {
-        public DivertStatement(Path targetPath, Stack<ICompiledStructure> parameters = null)
+        public DivertStatement(Path targetPath, bool isTunnel, Stack<ICompiledStructure> parameters = null)
         {
             TargetPath = targetPath;
+            IsTunnel = isTunnel;
             Parameters = parameters != null ? parameters.ToArray() : new ICompiledStructure[0];
         }
 
         public Path TargetPath { get; }
+        public bool IsTunnel { get; }
         public ICompiledStructure[] Parameters { get; }
 
         public void Decompile(StoryDecompiler dc)
@@ -1084,6 +1099,10 @@ namespace inkdc
                         Parameters[Parameters.Length - i - 1].Decompile(dc);
                     }
                     dc.Out(")");
+                }
+                if (IsTunnel)
+                {
+                    dc.Out(" ->");
                 }
                 dc.Out("\n");
             }
@@ -1148,6 +1167,14 @@ namespace inkdc
         {
             dc.Out("return ");
             returnValue.Decompile(dc);
+        }
+    }
+
+    class TunnelOnwardsStatement : ICompiledStructure
+    {
+        public void Decompile(StoryDecompiler dc)
+        {
+            dc.Out("->->");
         }
     }
 
