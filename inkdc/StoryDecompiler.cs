@@ -16,6 +16,7 @@ namespace inkdc
         public Story Story { get; }
         private StringBuilder result = new StringBuilder();
         public int ChoiceNesting { get; set; }
+        public Dictionary<string, ParameterType[]> Signatures = new();
 
         public string DecompileRoot()
         {
@@ -568,6 +569,10 @@ namespace inkdc
                 {
                     result.Add(new EmbeddedExpression(AnalyzeExpression(container, expressionStart, cursor.Index - 2)));
                 }
+                else if (cursor.Container.content[cursor.Index - 2].IsControlCommand(ControlCommand.CommandType.PopEvaluatedValue))
+                {
+                    result.Add(new StatementExpression(AnalyzeExpression(container, expressionStart, cursor.Index - 2)));
+                }
                 else
                 {
                     result.Add(new StatementExpression(AnalyzeExpression(container, expressionStart, cursor.Index - 1)));
@@ -686,6 +691,7 @@ namespace inkdc
                         throw new NotSupportedException("Don't know how to decompile divert to unresolved container");
                     }
                     BuildFunctionCall(stack, callTarget.name, DetectArgCount(callTarget));
+                    RecordCallSignature((FunctionCall)stack.Peek());
                 }
                 else
                 {
@@ -707,6 +713,29 @@ namespace inkdc
                 }
             }
             return container.content.Count;
+        }
+
+        void RecordCallSignature(FunctionCall call)
+        {
+            ParameterType[] signature = new ParameterType[call.Operands.Count];
+            for (int i = 0; i < call.Operands.Count; i++)
+            {
+                ParameterType type = ParameterType.Regular;
+                if (call.Operands[i] is CompiledValue cv)
+                {
+                    if (cv.Value is DivertTargetValue)
+                    {
+                        type = ParameterType.Divert;
+                    }
+                    else if (cv.Value is VariablePointerValue)
+                    {
+                        type = ParameterType.Ref;
+                    }
+                }
+
+                signature[i] = type;
+            }
+            Signatures.TryAdd(call.Name, signature);
         }
 
         void BuildBinaryExpression(Stack<ICompiledStructure> stack, string op)
@@ -731,6 +760,8 @@ namespace inkdc
             "+", "-", "/", "*", "%", "==", "<", ">", ">=", "<=", "!=", "&&", "||", "?", "!?"
         };
     }
+
+    public enum ParameterType { Regular, Divert, Ref }
 
     public interface ICompiledStructure
     {
@@ -824,9 +855,15 @@ namespace inkdc
 
         public void Decompile(StoryDecompiler dc)
         {
+            ParameterType[] signature;
+            if (!dc.Signatures.TryGetValue(Name, out signature))
+            {
+                signature = null;
+            }
+
             dc.EnsureNewLine();
             dc.Out("== ");
-            if (IsFunction)
+            if (IsFunction || signature != null)
             {
                 dc.Out("function ");
             }
@@ -839,6 +876,10 @@ namespace inkdc
                     if (i > 0)
                     {
                         dc.Out(", ");
+                    }
+                    if (signature != null && signature[i] == ParameterType.Ref)
+                    {
+                        dc.Out("ref ");
                     }
                     dc.Out(Parameters[i]);
                 }
@@ -875,26 +916,30 @@ namespace inkdc
 
     class CompiledValue : ICompiledStructure
     {
-        private readonly Value value;
-
         public CompiledValue(Value value)
         {
-            this.value = value;
+            Value = value;
         }
+
+        public Value Value { get; private set; }
 
         public void Decompile(StoryDecompiler dc)
         {
-            if (value is DivertTargetValue divertTargetValue)
+            if (Value is DivertTargetValue divertTargetValue)
             {
                 dc.Out("-> " + divertTargetValue.CompactPathString(divertTargetValue.targetPath));
             }
-            else if (value is StringValue stringValue)
+            else if (Value is StringValue stringValue)
             {
                 dc.Out("\"" + stringValue + "\"");
             }
+            else if (Value is VariablePointerValue pointerValue)
+            {
+                dc.Out(pointerValue.variableName);
+            }
             else
             {
-                dc.Out(value.ToString());
+                dc.Out(Value.ToString());
             }
         }
     }

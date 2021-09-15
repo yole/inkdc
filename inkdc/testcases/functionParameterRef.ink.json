@@ -1,0 +1,79 @@
+﻿{
+  "inkVersion": 20,
+  "root": [
+    [
+      "ev",
+      {
+        "^var": "gold",
+        "ci": -1
+      },
+      7,
+      {
+        "f()": "alter"
+      },
+      "pop",
+      "/ev",
+      "\n",
+      "ev",
+      {
+        "^var": "health",
+        "ci": -1
+      },
+      -4,
+      {
+        "f()": "alter"
+      },
+      "pop",
+      "/ev",
+      "\n",
+      [
+        "done",
+        {
+          "#n": "g-0"
+        }
+      ],
+      null
+    ],
+    "done",
+    {
+      "alter": [
+        {
+          "temp=": "k"
+        },
+        {
+          "temp=": "x"
+        },
+        "ev",
+        {
+          "VAR?": "x"
+        },
+        {
+          "VAR?": "k"
+        },
+        "+",
+        "/ev",
+        {
+          "temp=": "x",
+          "re": true
+        },
+        null
+      ],
+      "global decl": [
+        "ev",
+        0,
+        {
+          "VAR=": "gold"
+        },
+        20,
+        {
+          "VAR=": "health"
+        },
+        "/ev",
+        "end",
+        null
+      ]
+    }
+  ],
+  "listDefs": {
+  }
+}
