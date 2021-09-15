@@ -170,10 +170,25 @@ namespace inkdc
                 {
                     result.Add(AnalyzeContainer(child));
                 }
+                else if (container.content[index].IsControlCommand(ControlCommand.CommandType.StartThread))
+                {
+                    if (container.content[index+1] is Divert divert)
+                    {
+                        index++;
+                        result.Add(new DivertStatement(divert.targetPath,
+                            divert.pushesToStack && divert.stackPushType == PushPopType.Tunnel,
+                            true));
+                    }
+                    else
+                    {
+                        throw new NotSupportedException("Start thread not followed by a divert");
+                    }
+                }
                 else if (container.content[index] is Divert divert)
                 {
                     result.Add(new DivertStatement(divert.targetPath,
-                        divert.pushesToStack && divert.stackPushType == PushPopType.Tunnel));
+                        divert.pushesToStack && divert.stackPushType == PushPopType.Tunnel,
+                        false));
                 }
                 else
                 {
@@ -527,6 +542,7 @@ namespace inkdc
                 index = endIndex + 1;
                 return new DivertStatement(divert.targetPath,
                     divert.pushesToStack && divert.stackPushType == PushPopType.Tunnel,
+                    false,
                     stack);
             }
             if (container.content[endIndex].IsControlCommand(ControlCommand.CommandType.PopFunction))
@@ -1071,22 +1087,32 @@ namespace inkdc
 
     class DivertStatement : ICompiledStructure
     {
-        public DivertStatement(Path targetPath, bool isTunnel, Stack<ICompiledStructure> parameters = null)
+        public DivertStatement(Path targetPath, bool isTunnel, bool isThread, Stack<ICompiledStructure> parameters = null)
         {
             TargetPath = targetPath;
             IsTunnel = isTunnel;
+            IsThread = isThread;
             Parameters = parameters != null ? parameters.ToArray() : new ICompiledStructure[0];
         }
 
         public Path TargetPath { get; }
         public bool IsTunnel { get; }
+        public bool IsThread { get; }
         public ICompiledStructure[] Parameters { get; }
 
         public void Decompile(StoryDecompiler dc)
         {
             if (!IsGeneratedDivert(dc))
             {
-                dc.Out("-> " + TargetPath.componentsString);
+                if (IsThread)
+                {
+                    dc.Out("<- ");
+                }
+                else
+                {
+                    dc.Out("-> ");
+                }
+                dc.Out(TargetPath.componentsString);
                 if (Parameters.Length != 0)
                 {
                     dc.Out("(");
